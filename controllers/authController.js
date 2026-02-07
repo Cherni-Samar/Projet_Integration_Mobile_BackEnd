@@ -1,7 +1,11 @@
 const User = require('../models/User');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const { sendVerificationEmail, sendPasswordResetEmail } = require('../utils/emailService');
+const { 
+  sendVerificationEmail, 
+  sendPasswordResetEmail,
+  sendWelcomeEmail  // ✅ Ajoutez ceci
+} = require('../utils/emailService');
 
 // Générer un code à 6 chiffres
 const generateVerificationCode = () => {
@@ -41,10 +45,11 @@ exports.signup = async (req, res, next) => {
       emailVerificationExpires: verificationExpires,
     });
 
+    // Envoyer l'email de vérification
     try {
       await sendVerificationEmail(email, verificationCode);
     } catch (emailError) {
-      console.error('Erreur envoi email:', emailError);
+      console.error('Erreur envoi email de vérification:', emailError);
     }
 
     const token = jwt.sign(
@@ -72,7 +77,7 @@ exports.signup = async (req, res, next) => {
   }
 };
 
-// 2️⃣ VERIFY EMAIL
+// 2️⃣ VERIFY EMAIL - ✅ MODIFIÉ pour envoyer l'email de bienvenue
 exports.verifyEmail = async (req, res, next) => {
   try {
     const { email, code } = req.body;
@@ -114,14 +119,20 @@ exports.verifyEmail = async (req, res, next) => {
       });
     }
 
+    // ✅ Marquer l'email comme vérifié
     user.isEmailVerified = true;
     user.emailVerificationCode = null;
     user.emailVerificationExpires = null;
     await user.save();
 
+    // ✅ Envoyer l'email de bienvenue (en arrière-plan)
+    sendWelcomeEmail(user.email, user.name)
+      .then(() => console.log('✅ Email de bienvenue envoyé à:', user.email))
+      .catch(err => console.error('❌ Erreur envoi email de bienvenue:', err));
+
     res.status(200).json({
       success: true,
-      message: 'Email vérifié avec succès',
+      message: 'Email vérifié avec succès ! Bienvenue sur E-Team 🎉',
       data: {
         user: {
           id: user._id,
@@ -356,7 +367,7 @@ exports.verifyResetCode = async (req, res) => {
     if (!user) {
       return res.status(404).json({ 
         success: false,
-        message: 'Utilisateur non trouv��' 
+        message: 'Utilisateur non trouvé' 
       });
     }
 
@@ -462,3 +473,5 @@ exports.resetPassword = async (req, res) => {
     });
   }
 };
+
+module.exports = exports;
