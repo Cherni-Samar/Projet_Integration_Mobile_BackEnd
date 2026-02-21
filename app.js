@@ -4,6 +4,8 @@ const cors = require('cors');
 const mongoose = require('mongoose');
 
 const authRoutes = require('./routes/authRoutes');
+const agentRoutes = require('./routes/agentRoutes');
+
 const errorHandler = require('./middleware/errorHandler');
 
 const app = express();
@@ -30,6 +32,7 @@ app.get('/', (req, res) => {
 });
 
 app.use('/api/auth', authRoutes);
+app.use('/api/agents', agentRoutes);
 
 // Error Handler
 app.use(errorHandler);
