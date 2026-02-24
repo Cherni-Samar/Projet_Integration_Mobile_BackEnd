@@ -4,8 +4,7 @@ const cors = require('cors');
 const mongoose = require('mongoose');
 
 const authRoutes = require('./routes/authRoutes');
-const agentRoutes = require('./routes/agentRoutes');
-
+const paymentRoutes = require('./routes/paymentRoutes');
 const errorHandler = require('./middleware/errorHandler');
 
 const app = express();
@@ -22,7 +21,7 @@ mongoose.connect(process.env.MONGODB_URI)
 
 // Routes
 app.get('/', (req, res) => {
-  res.json({ 
+  res.json({
     message: 'Flutter Auth API',
     version: '1.0.0',
     endpoints: {
@@ -32,7 +31,7 @@ app.get('/', (req, res) => {
 });
 
 app.use('/api/auth', authRoutes);
-app.use('/api/agents', agentRoutes);
+app.use('/api/payment', paymentRoutes);
 
 // Error Handler
 app.use(errorHandler);
