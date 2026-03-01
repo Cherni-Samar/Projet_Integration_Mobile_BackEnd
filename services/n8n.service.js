@@ -18,7 +18,8 @@ async function _post(path, body) {
 module.exports = {
     hello: (data) => _post('hera', data),
     requestLeave: (data) => _post('hera/leave-request', data),
-    urgentLeave: (data) => _post('hera/leave-urgent', data),
+    urgentLeave: (data) => _post('hera/urgent-leave', data),  
+    refusedLeave: (data) => _post('hera/leave-refused', data),  // ✅ Ajouté
     onboarding: (data) => _post('hera/onboarding', data),
     promote: (data) => _post('hera/promotion', data),
     offboarding: (data) => _post('hera/offboarding', data),

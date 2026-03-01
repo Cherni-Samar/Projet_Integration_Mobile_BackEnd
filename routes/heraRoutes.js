@@ -9,5 +9,14 @@ router.post('/onboarding',               hera.onboarding);
 router.post('/promote',                  hera.promote);
 router.post('/offboarding',              hera.offboarding);
 router.get ('/history/:employee_id',     hera.getHistory);
+router.get ('/leaves/:employee_id',      hera.getLeaves);
+
+// ══════════════════════════════════════════════════════════════════════════
+// ROUTES ADMIN
+// ══════════════════════════════════════════════════════════════════════════
+
+router.get ('/admin/stats',              hera.getAdminStats);
+router.get ('/admin/employees',          hera.getAllEmployees);
+router.get ('/admin/recent-actions',     hera.getRecentActions);
 
 module.exports = router;
