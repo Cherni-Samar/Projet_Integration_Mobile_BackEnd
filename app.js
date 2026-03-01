@@ -6,6 +6,7 @@ const mongoose = require('mongoose');
 const authRoutes = require('./routes/authRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
 const errorHandler = require('./middleware/errorHandler');
+const heraRoutes = require('./routes/heraRoutes');
 
 const app = express();
 
@@ -33,6 +34,8 @@ app.get('/', (req, res) => {
 
 app.use('/api/auth', authRoutes);
 app.use('/api/payment', paymentRoutes);
+// ✅ AJOUTER
+app.use('/api/hera',heraRoutes)
 
 // Error Handler
 app.use(errorHandler);
