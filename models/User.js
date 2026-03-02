@@ -41,9 +41,33 @@ const userSchema = new mongoose.Schema(
 
     // Système de Recrutement (Liste des agents activés par l'utilisateur)
     // Exemple: ['finance', 'planning']
-    activeAgents: [{
-      type: String
-    }],
+    activeAgents: {
+      type: [String],
+      default: []
+    },
+
+    subscriptionPlan: {
+      type: String,
+      enum: ['free', 'basic', 'premium'],
+      default: 'free'
+    },
+
+    maxAgentsAllowed: {
+      type: Number,
+      enum: [1, 3, 5],
+      default: 1
+    },
+
+    energyBalance: {
+      type: Number,
+      default: 0
+    },
+
+    // Prevent double-crediting the same Stripe PaymentIntent
+    processedPaymentIntents: {
+      type: [String],
+      default: []
+    },
 
     // Statistiques pour le Dashboard
     tasksCompletedCount: {
@@ -106,6 +130,7 @@ userSchema.methods.toJSON = function () {
   delete user.resetPasswordExpires;
   delete user.emailVerificationCode;
   delete user.emailVerificationExpires;
+  delete user.processedPaymentIntents;
   return user;
 };
 

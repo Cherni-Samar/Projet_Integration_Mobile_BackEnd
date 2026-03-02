@@ -3,9 +3,11 @@ const User = require('../models/User');
 
 // Définition des packs en dur sur le serveur (Sécurité maximale)
 const PAYMENTS_PACKS = {
-    'starter_pack': { amount: 1000, credits: 100, name: 'Pack Découverte' },
-    'pro_pack': { amount: 4500, credits: 500, name: 'Pack Professionnel' },
-    'hiring_fee': { amount: 2000, credits: 0, name: 'Frais Engagement Agent' } // Pour le "Hiring system"
+    free_trial: { amount: 0, credits: 50, agentsAllowed: 1, name: 'Free Trial' },
+    basic_plan: { amount: 5900, credits: 250, agentsAllowed: 3, name: 'Basic Plan' },
+    premium_plan: { amount: 9900, credits: 500, agentsAllowed: 5, name: 'Premium Plan' },
+    energy_eco: { amount: 1000, credits: 100, type: 'topup', name: 'Pack Éco' },
+    energy_boost: { amount: 3500, credits: 500, type: 'topup', name: 'Pack Boost' }
 };
 
 exports.createPaymentIntent = async (req, res, next) => {
@@ -60,19 +62,128 @@ exports.confirmPayment = async (req, res) => {
 
         if (paymentIntent.status === 'succeeded') {
             const userId = paymentIntent.metadata.userId;
-            const credits = parseInt(paymentIntent.metadata.creditsToAdd);
+            const packId = paymentIntent.metadata.packId;
+
+            if (req.user?.id && req.user.id !== userId) {
+                return res.status(403).json({
+                    success: false,
+                    message: 'Forbidden',
+                });
+            }
+
+            const selectedPack = PAYMENTS_PACKS[packId];
+            if (!selectedPack) {
+                return res.status(400).json({
+                    success: false,
+                    message: 'Pack de paiement invalide',
+                });
+            }
+
+            const creditsToAdd = Number.parseInt(
+                paymentIntent.metadata.creditsToAdd ?? `${selectedPack.credits}`,
+                10,
+            );
+
+            // Idempotency: avoid crediting the same PaymentIntent twice
+            const alreadyProcessedUser = await User.findOne({
+                _id: userId,
+                processedPaymentIntents: paymentIntentId,
+            }).lean();
+            if (alreadyProcessedUser) {
+                return res.status(200).json({
+                    success: true,
+                    message: 'Paiement déjà traité',
+                    newBalance: alreadyProcessedUser.credits,
+                    data: {
+                        user: {
+                            id: alreadyProcessedUser._id,
+                            email: alreadyProcessedUser.email,
+                            name: alreadyProcessedUser.name,
+                            isEmailVerified: alreadyProcessedUser.isEmailVerified,
+                            subscriptionPlan: alreadyProcessedUser.subscriptionPlan,
+                            maxAgentsAllowed: alreadyProcessedUser.maxAgentsAllowed,
+                            activeAgents: alreadyProcessedUser.activeAgents,
+                            energyBalance: alreadyProcessedUser.energyBalance,
+                            credits: alreadyProcessedUser.credits,
+                        },
+                    },
+                });
+            }
+
+            const update = {
+                $inc: {
+                    credits: creditsToAdd,
+                    energyBalance: creditsToAdd,
+                },
+                $addToSet: {
+                    processedPaymentIntents: paymentIntentId,
+                },
+            };
+
+            // If it's a subscription plan (not a topup), update plan and agent limit.
+            if (!selectedPack.type) {
+                if (packId === 'basic_plan') {
+                    update.$set = {
+                        subscriptionPlan: 'basic',
+                        maxAgentsAllowed: selectedPack.agentsAllowed ?? 3,
+                    };
+                } else if (packId === 'premium_plan') {
+                    update.$set = {
+                        subscriptionPlan: 'premium',
+                        maxAgentsAllowed: selectedPack.agentsAllowed ?? 5,
+                    };
+                }
+            }
 
             // Mise à jour de l'utilisateur dans MongoDB
-            const updatedUser = await User.findByIdAndUpdate(
-                userId,
-                { $inc: { credits: credits } }, // Incrémente le solde
+            const updatedUser = await User.findOneAndUpdate(
+                { _id: userId, processedPaymentIntents: { $ne: paymentIntentId } },
+                update,
                 { new: true }
             );
 
+            if (!updatedUser) {
+                // Extremely rare race: another request processed it between our check and update
+                const freshUser = await User.findById(userId).lean();
+                return res.status(200).json({
+                    success: true,
+                    message: 'Paiement déjà traité',
+                    newBalance: freshUser?.credits,
+                    data: {
+                        user: freshUser
+                            ? {
+                                  id: freshUser._id,
+                                  email: freshUser.email,
+                                  name: freshUser.name,
+                                  isEmailVerified: freshUser.isEmailVerified,
+                                  subscriptionPlan: freshUser.subscriptionPlan,
+                                  maxAgentsAllowed: freshUser.maxAgentsAllowed,
+                                  activeAgents: freshUser.activeAgents,
+                                  energyBalance: freshUser.energyBalance,
+                                  credits: freshUser.credits,
+                              }
+                            : null,
+                    },
+                });
+            }
+
             return res.status(200).json({
                 success: true,
+                message: "Paiement confirmé avec succès !",
                 newBalance: updatedUser.credits,
-                message: "Crédits ajoutés avec succès !"
+                data: {
+                    user: {
+                        id: updatedUser._id,
+                        email: updatedUser.email,
+                        name: updatedUser.name,
+                        isEmailVerified: updatedUser.isEmailVerified,
+                        subscriptionPlan: updatedUser.subscriptionPlan,
+                        maxAgentsAllowed: updatedUser.maxAgentsAllowed,
+                        activeAgents: updatedUser.activeAgents,
+                        energyBalance: updatedUser.energyBalance,
+                        credits: updatedUser.credits,
+                    },
+                },
             });
         }
 
