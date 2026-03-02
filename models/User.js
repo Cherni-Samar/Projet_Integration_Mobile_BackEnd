@@ -23,7 +23,48 @@ const userSchema = new mongoose.Schema(
       trim: true,
       default: null
     },
-    // Champs pour la vérification email
+
+    // --- NOUVEAUX CHAMPS STARTUP E-TEAM ---
+
+    // Type d'entreprise (Rempli lors de l'onboarding pour la recommandation)
+    businessType: {
+      type: String,
+      enum: ['Marketing', 'Retail', 'Tech', 'Healthcare', 'Consulting', null],
+      default: null
+    },
+
+    // Système de Crédits (Usage Credits)
+    credits: {
+      type: Number,
+      default: 10 // On offre 10 crédits à l'inscription pour le "Free Trial"
+    },
+
+    // Système de Recrutement (Liste des agents activés par l'utilisateur)
+    // Exemple: ['finance', 'planning']
+    activeAgents: [{
+      type: String
+    }],
+
+    // Statistiques pour le Dashboard
+    tasksCompletedCount: {
+      type: Number,
+      default: 0
+    },
+
+    // Gestion de l'abonnement (Membership)
+    subscriptionStatus: {
+      type: String,
+      enum: ['none', 'free_trial', 'active', 'expired'],
+      default: 'free_trial'
+    },
+    
+    stripeCustomerId: {
+      type: String,
+      default: null
+    },
+
+    // --- CHAMPS DE SÉCURITÉ ET VÉRIFICATION ---
+    
     isEmailVerified: {
       type: Boolean,
       default: false
@@ -36,7 +77,6 @@ const userSchema = new mongoose.Schema(
       type: Date,
       default: null
     },
-    // Champs pour r��initialisation de mot de passe
     resetPasswordCode: {
       type: String,
       default: null
@@ -51,10 +91,14 @@ const userSchema = new mongoose.Schema(
     }
   },
   {
-    timestamps: true
+    timestamps: true // Crée automatiquement createdAt et updatedAt
   }
 );
 
+/**
+ * Méthode pour nettoyer l'objet JSON avant de l'envoyer au Frontend (Flutter)
+ * Supprime les mots de passe et les codes de sécurité
+ */
 userSchema.methods.toJSON = function () {
   const user = this.toObject();
   delete user.password;
