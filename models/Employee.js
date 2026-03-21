@@ -40,6 +40,14 @@ const employeeSchema = new mongoose.Schema({
     type: String, 
     trim: true 
   },
+  // Ajoute ces champs dans employeeSchema
+password: {
+  type: String,
+  select: false,  // jamais retourné par défaut
+  default: null   // null = pas encore activé
+},
+
+
   
   // ── Congés par type ──────────────────────────────────────────────────────
   leave_balance: {

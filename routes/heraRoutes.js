@@ -10,6 +10,7 @@ router.post('/promote',                  hera.promote);
 router.post('/offboarding',              hera.offboarding);
 router.get ('/history/:employee_id',     hera.getHistory);
 router.get ('/leaves/:employee_id',      hera.getLeaves);
+router.get('/leave-history/:employee_id', hera.getLeaveHistory);
 
 // ══════════════════════════════════════════════════════════════════════════
 // ROUTES ADMIN

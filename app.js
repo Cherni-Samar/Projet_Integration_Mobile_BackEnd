@@ -14,6 +14,8 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(express.static('public'));
+app.use('/api/employees', require('./routes/employeeAuth'));
 
 // ✅ MongoDB Connection (sans les options obsolètes)
 mongoose.connect(process.env.MONGODB_URI)
