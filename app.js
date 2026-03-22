@@ -7,6 +7,7 @@ const authRoutes = require('./routes/authRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
 const errorHandler = require('./middleware/errorHandler');
 const heraRoutes = require('./routes/heraRoutes');
+const agentRoutes = require('./routes/agentRoutes');
 
 const app = express();
 
@@ -36,6 +37,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/payment', paymentRoutes);
 // ✅ AJOUTER
 app.use('/api/hera',heraRoutes)
+app.use('/api/agents', agentRoutes);
 
 // Error Handler
 app.use(errorHandler);
