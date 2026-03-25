@@ -2,7 +2,7 @@ const Employee = require('../models/Employee');
 const LeaveRequest = require('../models/LeaveRequest');
 const HeraAction = require('../models/HeraAction');
 const n8n = require('../services/n8n.service');
-const bcrypt = require('bcryptjs'); // ✅ AJOUTÉ
+const bcrypt = require('bcryptjs');
 
 // ══════════════════════════════════════════════════════════════════════════
 // UTILS
@@ -36,6 +36,24 @@ function checkMinimumNotice(start_date, type, minDays = 7) {
     };
   }
   return { valid: true };
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// HELPER - Email de refus onboarding
+// ══════════════════════════════════════════════════════════════════════════
+
+async function sendOnboardingRefusalEmail(name, email, refusal_reason) {
+  try {
+    await n8n.onboarding({
+      employee_name: name,
+      employee_email: email,
+      status: 'refused',
+      refusal_reason
+    });
+    console.log(`📧 Email de refus envoyé à ${email} : ${refusal_reason}`);
+  } catch (emailError) {
+    console.error('⚠️ Erreur envoi email refus onboarding:', emailError.message);
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -355,6 +373,7 @@ exports.onboarding = async (req, res) => {
       manager_email, salary
     } = req.body;
 
+    // ── Champs obligatoires ───────────────────────────────────────────────
     if (!name || !email || !role || !contract_type) {
       return res.status(400).json({
         success: false,
@@ -363,8 +382,13 @@ exports.onboarding = async (req, res) => {
       });
     }
 
+    // ── Email déjà existant ───────────────────────────────────────────────
     const existingEmployee = await Employee.findOne({ email });
     if (existingEmployee) {
+      await sendOnboardingRefusalEmail(
+        name, email,
+        `L'email ${email} est déjà associé à un compte existant.`
+      );
       return res.status(409).json({
         success: false,
         error: 'email_exists',
@@ -372,11 +396,12 @@ exports.onboarding = async (req, res) => {
       });
     }
 
+    // ── Limite par type de contrat ────────────────────────────────────────
     const CONTRACT_LIMITS = {
-      Stage: { max_simultaneous: 3, max_per_year: 10 },
-      Freelance: { max_simultaneous: 5, max_per_year: 20 },
-      CDD: { max_simultaneous: 10, max_per_year: 30 },
-      CDI: { max_simultaneous: 50, max_per_year: 100 }
+      Stage:     { max_simultaneous: 3,  max_per_year: 10  },
+      Freelance: { max_simultaneous: 5,  max_per_year: 20  },
+      CDD:       { max_simultaneous: 10, max_per_year: 30  },
+      CDI:       { max_simultaneous: 50, max_per_year: 100 }
     };
 
     const currentContractCount = await Employee.countDocuments({
@@ -386,6 +411,10 @@ exports.onboarding = async (req, res) => {
 
     const contractLimit = CONTRACT_LIMITS[contract_type];
     if (contractLimit && currentContractCount >= contractLimit.max_simultaneous) {
+      await sendOnboardingRefusalEmail(
+        name, email,
+        `Limite de contrats ${contract_type} atteinte : ${currentContractCount}/${contractLimit.max_simultaneous} actuellement.`
+      );
       return res.status(400).json({
         success: false,
         error: 'contract_limit_reached',
@@ -393,14 +422,15 @@ exports.onboarding = async (req, res) => {
       });
     }
 
+    // ── Limite par département ────────────────────────────────────────────
     if (department) {
       const DEPARTMENT_LIMITS = {
-        Tech: { max_employees: 20, max_interns: 2 },
-        Design: { max_employees: 10, max_interns: 1 },
-        Marketing: { max_employees: 15, max_interns: 2 },
-        RH: { max_employees: 5, max_interns: 0 },
-        Finance: { max_employees: 8, max_interns: 0 },
-        Support: { max_employees: 12, max_interns: 1 },
+        Tech:       { max_employees: 5, max_interns: 2 },
+        Design:     { max_employees: 5, max_interns: 1 },
+        Marketing:  { max_employees: 10, max_interns: 2 },
+        RH:         { max_employees: 5,  max_interns: 0 },
+        Finance:    { max_employees: 8,  max_interns: 0 },
+        Support:    { max_employees: 12, max_interns: 1 },
         Management: { max_employees: 10, max_interns: 0 }
       };
 
@@ -411,6 +441,10 @@ exports.onboarding = async (req, res) => {
 
       const deptLimit = DEPARTMENT_LIMITS[department];
       if (deptLimit && deptCount >= deptLimit.max_employees) {
+        await sendOnboardingRefusalEmail(
+          name, email,
+          `Le département ${department} est complet : ${deptCount}/${deptLimit.max_employees} employés maximum.`
+        );
         return res.status(400).json({
           success: false,
           error: 'department_limit_reached',
@@ -425,6 +459,10 @@ exports.onboarding = async (req, res) => {
           status: { $in: ['active', 'onboarding'] }
         });
         if (internCount >= deptLimit.max_interns) {
+          await sendOnboardingRefusalEmail(
+            name, email,
+            `Le département ${department} ne peut pas accueillir plus de ${deptLimit.max_interns} stagiaire(s) (${internCount} actuellement).`
+          );
           return res.status(400).json({
             success: false,
             error: 'intern_limit_reached',
@@ -434,6 +472,7 @@ exports.onboarding = async (req, res) => {
       }
     }
 
+    // ── Postes uniques ────────────────────────────────────────────────────
     const UNIQUE_ROLES = ['CEO', 'Directeur Général', 'CFO', 'CTO', 'DRH'];
     const isUniqueRole = UNIQUE_ROLES.some(ur => role.toLowerCase().includes(ur.toLowerCase()));
     if (isUniqueRole) {
@@ -442,6 +481,10 @@ exports.onboarding = async (req, res) => {
         status: { $in: ['active', 'onboarding'] }
       });
       if (existingRole) {
+        await sendOnboardingRefusalEmail(
+          name, email,
+          `Le poste "${role}" est déjà occupé. Ce poste est unique dans l'entreprise.`
+        );
         return res.status(400).json({
           success: false,
           error: 'unique_role_taken',
@@ -450,14 +493,19 @@ exports.onboarding = async (req, res) => {
       }
     }
 
+    // ── Combinaisons interdites ───────────────────────────────────────────
     const FORBIDDEN_COMBINATIONS = {
-      Stage: ['Manager', 'CEO', 'Directeur', 'Team Lead', 'Chef', 'Responsable', 'Senior'],
+      Stage:     ['Manager', 'CEO', 'Directeur', 'Team Lead', 'Chef', 'Responsable', 'Senior'],
       Freelance: ['CEO', 'Directeur Général', 'DRH', 'CFO', 'CTO']
     };
     const forbiddenRoles = FORBIDDEN_COMBINATIONS[contract_type];
     if (forbiddenRoles) {
       const isForbidden = forbiddenRoles.some(fr => role.toLowerCase().includes(fr.toLowerCase()));
       if (isForbidden) {
+        await sendOnboardingRefusalEmail(
+          name, email,
+          `La combinaison contrat "${contract_type}" et poste "${role}" n'est pas autorisée.`
+        );
         return res.status(400).json({
           success: false,
           error: 'invalid_role_contract_combination',
@@ -466,6 +514,7 @@ exports.onboarding = async (req, res) => {
       }
     }
 
+    // ── Limite quotidienne ────────────────────────────────────────────────
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const tomorrow = new Date(today);
@@ -474,6 +523,10 @@ exports.onboarding = async (req, res) => {
       createdAt: { $gte: today, $lt: tomorrow }
     });
     if (onboardingsToday >= 5) {
+      await sendOnboardingRefusalEmail(
+        name, email,
+        `La limite de ${onboardingsToday}/5 demandes d'embauche par jour est atteinte. Veuillez réessayer demain.`
+      );
       return res.status(400).json({
         success: false,
         error: 'daily_limit_reached',
@@ -481,15 +534,16 @@ exports.onboarding = async (req, res) => {
       });
     }
 
+    // ── Création employé ──────────────────────────────────────────────────
     console.log(`🤖 HERA ONBOARDING : Création de ${name} (${role})`);
 
     let leaveBalance, contractDuration;
     switch (contract_type) {
-      case 'CDI':   leaveBalance = { annual: 25, sick: 10, urgent: 3 }; contractDuration = null; break;
-      case 'CDD':   leaveBalance = { annual: 20, sick: 10, urgent: 2 }; contractDuration = 12; break;
-      case 'Stage': leaveBalance = { annual: 5,  sick: 5,  urgent: 1 }; contractDuration = 6; break;
-      case 'Freelance': leaveBalance = { annual: 0, sick: 0, urgent: 0 }; contractDuration = 12; break;
-      default: leaveBalance = { annual: 25, sick: 10, urgent: 3 }; contractDuration = null;
+      case 'CDI':      leaveBalance = { annual: 25, sick: 10, urgent: 3 }; contractDuration = null; break;
+      case 'CDD':      leaveBalance = { annual: 20, sick: 10, urgent: 2 }; contractDuration = 12;   break;
+      case 'Stage':    leaveBalance = { annual: 5,  sick: 5,  urgent: 1 }; contractDuration = 6;    break;
+      case 'Freelance':leaveBalance = { annual: 0,  sick: 0,  urgent: 0 }; contractDuration = 12;   break;
+      default:         leaveBalance = { annual: 25, sick: 10, urgent: 3 }; contractDuration = null;
     }
 
     const startDate = contract_start ? new Date(contract_start) : new Date();
@@ -511,13 +565,14 @@ exports.onboarding = async (req, res) => {
 
     console.log(`✅ Employé créé : ${employee._id}`);
 
-    // ✅ GÉNÉRATION MOT DE PASSE TEMPORAIRE
+    // ── Génération mot de passe temporaire ───────────────────────────────
     const tempPassword = Math.random().toString(36).slice(-8);
     const hashedPassword = await bcrypt.hash(tempPassword, 10);
     employee.password = hashedPassword;
     await employee.save();
-console.log(`🔑 Mot de passe temporaire pour ${email} : ${tempPassword}`);
-    // LOG ACTION
+    console.log(`🔑 Mot de passe temporaire pour ${email} : ${tempPassword}`);
+
+    // ── Log action ────────────────────────────────────────────────────────
     await HeraAction.create({
       employee_id: employee._id,
       action_type: 'onboarding_started',
@@ -533,7 +588,7 @@ console.log(`🔑 Mot de passe temporaire pour ${email} : ${tempPassword}`);
       triggered_by: 'hera_auto',
     });
 
-    // ✅ ENVOI EMAIL AVEC MOT DE PASSE
+    // ── Envoi email de bienvenue avec mdp ─────────────────────────────────
     try {
       await n8n.onboarding({
         employee_name: name,
@@ -543,12 +598,13 @@ console.log(`🔑 Mot de passe temporaire pour ${email} : ${tempPassword}`);
         start_date: startDate.toISOString().split('T')[0],
         contract_type,
         leave_balance: leaveBalance,
-        temp_password: tempPassword, // ✅ AJOUTÉ
-        manager_email
+        temp_password: tempPassword,
+        manager_email,
+        status: 'approved'
       });
-      console.log('✅ Emails d\'onboarding envoyés avec mot de passe temporaire');
+      console.log('✅ Email de bienvenue envoyé avec mot de passe temporaire');
     } catch (emailError) {
-      console.error('⚠️ Erreur envoi emails:', emailError.message);
+      console.error('⚠️ Erreur envoi email:', emailError.message);
     }
 
     return res.status(201).json({
