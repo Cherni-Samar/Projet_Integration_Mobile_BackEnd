@@ -7,6 +7,7 @@
     "dev": "nodemon app.js"
   },
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "axios": "^1.13.6",
     "bcryptjs": "^3.0.3",
     "body-parser": "^2.2.2",
@@ -21,11 +22,13 @@
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.1.6",
     "morgan": "~1.9.1",
+    "node-cron": "^4.2.1",
     "nodemailer": "^8.0.1",
     "openai": "^6.25.0",
-    "stripe": "^20.4.0"
+    "stripe": "^20.4.0",
+    "ws": "^8.20.0"
   },
   "devDependencies": {
-    "nodemon": "^3.1.11"
+    "nodemon": "^3.1.14"
   }
 }
