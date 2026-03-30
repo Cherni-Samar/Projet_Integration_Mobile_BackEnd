@@ -1,6 +1,7 @@
 const Employee = require('../models/Employee');
 const LeaveRequest = require('../models/LeaveRequest');
 const HeraAction = require('../models/HeraAction');
+const User = require('../models/User');
 const n8n = require('../services/n8n.service');
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -357,20 +358,59 @@ exports.requestLeave = async (req, res) => {
       });
     }
 
+    // ── Consommation d'énergie (demande de congé) ─────────────────────────
+    // Coût: 5 énergie. On débite l'utilisateur authentifié si présent,
+    // sinon fallback sur le manager_email de l'employé.
+    const ENERGY_COST = 5;
+    const managerEmail = normalizeEmail(employee.manager_email);
+
+    const chargeFilter = req.user?.id
+      ? { _id: req.user.id }
+      : managerEmail
+        ? { email: managerEmail }
+        : null;
+
+    let chargedUser = null;
+    if (chargeFilter) {
+      chargedUser = await User.findOneAndUpdate(
+        { ...chargeFilter, energyBalance: { $gte: ENERGY_COST } },
+        { $inc: { energyBalance: -ENERGY_COST } },
+        { new: true }
+      );
+
+      if (!chargedUser) {
+        return res.status(403).json({
+          success: false,
+          error: 'insufficient_energy',
+          message: `❌ Énergie insuffisante. Cette action coûte ${ENERGY_COST} unités.`
+        });
+      }
+    }
+
     // Crée la demande avec le statut décidé par Hera
-    const leave = await LeaveRequest.create({
-      employee_id,
-      employee_email,
-      type,
-      start_date: start,
-      end_date: end,
-      days,
-      reason: reason || 'Congé',
-      status,  // ✅ approved ou refused, JAMAIS pending
-      simultaneous_count: simultaneousCount,
-      approved_by,
-      approved_at
-    });
+    let leave;
+    try {
+      leave = await LeaveRequest.create({
+        employee_id,
+        employee_email,
+        type,
+        start_date: start,
+        end_date: end,
+        days,
+        reason: reason || 'Congé',
+        status,  // ✅ approved ou refused, JAMAIS pending
+        simultaneous_count: simultaneousCount,
+        approved_by,
+        approved_at
+      });
+    } catch (createErr) {
+      if (chargedUser?._id) {
+        await User.findByIdAndUpdate(chargedUser._id, {
+          $inc: { energyBalance: ENERGY_COST }
+        });
+      }
+      throw createErr;
+    }
 
     console.log(`💾 Congé créé : ${leave._id} avec statut "${status}"`);
 
@@ -420,7 +460,8 @@ exports.requestLeave = async (req, res) => {
       days,
       balance_left: remaining - (status === 'approved' ? days : 0),
       simultaneous_count: simultaneousCount,
-      auto_decision_reason
+      auto_decision_reason,
+      energyBalance: chargedUser?.energyBalance
     });
 
   } catch (err) {
@@ -752,6 +793,9 @@ exports.getLeaves = async (req, res) => {
   }
 };
 
+// Alias rétro-compat : certains clients utilisent encore /leave-history
+exports.getLeaveHistory = exports.getLeaves;
+
 // ── Promotion ──────────────────────────────────────────────────────────────
 exports.promote = async (req, res) => {
   try {
@@ -1024,6 +1068,65 @@ exports.getRecentActions = async (req, res) => {
       success: false,
       error: 'server_error',
       message: error.message
+    });
+  }
+};
+
+/**
+ * Admin: récupère toutes les actions (HeraAction)
+ */
+exports.getAllActions = async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit, 10) || 100, 500);
+    const actions = await HeraAction.find()
+      .sort({ created_at: -1 })
+      .limit(limit)
+      .lean();
+
+    return res.json({ success: true, actions, total: actions.length });
+  } catch (error) {
+    console.error('❌ Erreur getAllActions:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'server_error',
+      message: error.message,
+    });
+  }
+};
+
+/**
+ * Admin: supprime une action (HeraAction)
+ */
+exports.deleteAction = async (req, res) => {
+  try {
+    const { action_id } = req.params;
+
+    if (!action_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'missing_fields',
+        message: '❌ action_id requis',
+      });
+    }
+
+    const deleted = await HeraAction.findByIdAndDelete(action_id);
+    if (!deleted) {
+      return res.status(404).json({
+        success: false,
+        error: 'not_found',
+        message: '❌ Action introuvable',
+      });
+    }
+
+    return res.json({ success: true, message: '🗑️ Action supprimée', action_id });
+  } catch (error) {
+    // CastError si action_id invalide
+    const status = error?.name === 'CastError' ? 400 : 500;
+    console.error('❌ Erreur deleteAction:', error);
+    return res.status(status).json({
+      success: false,
+      error: status === 400 ? 'invalid_id' : 'server_error',
+      message: error.message,
     });
   }
 };
