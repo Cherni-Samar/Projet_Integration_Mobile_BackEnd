@@ -9,6 +9,8 @@ const errorHandler = require('./middleware/errorHandler');
 const heraRoutes = require('./routes/heraRoutes');
 const agentRoutes = require('./routes/agentRoutes');
 const kashRoutes = require('./routes/kashRoutes');
+const emailRoutes = require('./routes/emailRoutes');
+const echoRoutes = require('./routes/echoRoutes');
 const { startContractCron } = require('./services/contractCron');
 
 const app = express();
@@ -46,6 +48,8 @@ app.use('/api/payment', paymentRoutes);
 app.use('/api/hera',heraRoutes)
 app.use('/api/agents', agentRoutes);
 app.use('/api/kash', kashRoutes);
+app.use('/api/emails', emailRoutes);
+app.use('/api/echo', echoRoutes);
 
 // Error Handler
 app.use(errorHandler);
