@@ -1,6 +1,7 @@
 const Employee = require('../models/Employee');
 const LeaveRequest = require('../models/LeaveRequest');
 const HeraAction = require('../models/HeraAction');
+const User = require('../models/User');
 const n8n = require('../services/n8n.service');
 const bcrypt = require('bcryptjs');
 
@@ -39,21 +40,61 @@ function checkMinimumNotice(start_date, type, minDays = 7) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// HELPER - Email de refus onboarding
+// HERA ONBOARDING - Validations & helpers
 // ══════════════════════════════════════════════════════════════════════════
 
-async function sendOnboardingRefusalEmail(name, email, refusal_reason) {
-  try {
-    await n8n.onboarding({
-      employee_name: name,
-      employee_email: email,
-      status: 'refused',
-      refusal_reason
-    });
-    console.log(`📧 Email de refus envoyé à ${email} : ${refusal_reason}`);
-  } catch (emailError) {
-    console.error('⚠️ Erreur envoi email refus onboarding:', emailError.message);
+const ALLOWED_CONTRACT_TYPES = ['CDI', 'CDD', 'Stage', 'Freelance'];
+
+const DEPARTMENT_LIMITS = {
+  Tech: { max_employees: 20, max_interns: 2 },
+  Design: { max_employees: 10, max_interns: 1 },
+  Marketing: { max_employees: 15, max_interns: 2 },
+  RH: { max_employees: 5, max_interns: 0 },
+  Finance: { max_employees: 8, max_interns: 0 },
+  Support: { max_employees: 12, max_interns: 1 },
+  Management: { max_employees: 10, max_interns: 0 },
+};
+
+const UNIQUE_ROLES = ['CEO', 'Directeur Général', 'CFO', 'CTO', 'DRH'];
+
+const FORBIDDEN_ROLE_COMBINATIONS = {
+  Stage: ['Manager', 'CEO', 'Directeur', 'Team Lead', 'Chef', 'Responsable', 'Senior'],
+  Freelance: ['CEO', 'Directeur Général', 'DRH', 'CFO', 'CTO'],
+};
+
+function normalizeEmail(email) {
+  return typeof email === 'string' ? email.trim().toLowerCase() : email;
+}
+
+function parseOptionalNumber(value) {
+  if (value === null || value === undefined || value === '') return null;
+  const n = Number(value);
+  return Number.isFinite(n) ? n : null;
+}
+
+function addMonths(date, months) {
+  const d = new Date(date);
+  if (Number.isFinite(months) && months !== null) {
+    d.setMonth(d.getMonth() + months);
   }
+  return d;
+}
+
+function computeContractEnd(contractType, startDate) {
+  // Default durations aligned with colleague implementation
+  const durations = {
+    CDI: null,
+    CDD: 12,
+    Stage: 6,
+    Freelance: 12,
+  };
+
+  const months = Object.prototype.hasOwnProperty.call(durations, contractType)
+    ? durations[contractType]
+    : null;
+
+  if (months === null) return null;
+  return addMonths(startDate, months);
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -261,13 +302,59 @@ exports.requestLeave = async (req, res) => {
       });
     }
 
-    const leave = await LeaveRequest.create({
-      employee_id, employee_email, type,
-      start_date: start, end_date: end, days,
-      reason: reason || 'Congé',
-      status, simultaneous_count: simultaneousCount,
-      approved_by, approved_at
-    });
+    // ── Consommation d'énergie (demande de congé) ─────────────────────────
+    // Coût: 5 énergie. On débite l'utilisateur authentifié si présent,
+    // sinon fallback sur le manager_email de l'employé.
+    const ENERGY_COST = 5;
+    const managerEmail = normalizeEmail(employee.manager_email);
+
+    const chargeFilter = req.user?.id
+      ? { _id: req.user.id }
+      : managerEmail
+        ? { email: managerEmail }
+        : null;
+
+    let chargedUser = null;
+    if (chargeFilter) {
+      chargedUser = await User.findOneAndUpdate(
+        { ...chargeFilter, energyBalance: { $gte: ENERGY_COST } },
+        { $inc: { energyBalance: -ENERGY_COST } },
+        { new: true }
+      );
+
+      if (!chargedUser) {
+        return res.status(403).json({
+          success: false,
+          error: 'insufficient_energy',
+          message: `❌ Énergie insuffisante. Cette action coûte ${ENERGY_COST} unités.`
+        });
+      }
+    }
+
+    // Crée la demande avec le statut décidé par Hera
+    let leave;
+    try {
+      leave = await LeaveRequest.create({
+        employee_id,
+        employee_email,
+        type,
+        start_date: start,
+        end_date: end,
+        days,
+        reason: reason || 'Congé',
+        status,  // ✅ approved ou refused, JAMAIS pending
+        simultaneous_count: simultaneousCount,
+        approved_by,
+        approved_at
+      });
+    } catch (createErr) {
+      if (chargedUser?._id) {
+        await User.findByIdAndUpdate(chargedUser._id, {
+          $inc: { energyBalance: ENERGY_COST }
+        });
+      }
+      throw createErr;
+    }
 
     console.log(`💾 Congé créé : ${leave._id} avec statut "${status}"`);
 
@@ -308,7 +395,8 @@ exports.requestLeave = async (req, res) => {
       start_date, end_date, days,
       balance_left: remaining - (status === 'approved' ? days : 0),
       simultaneous_count: simultaneousCount,
-      auto_decision_reason
+      auto_decision_reason,
+      energyBalance: chargedUser?.energyBalance
     });
 
   } catch (err) {
@@ -368,12 +456,17 @@ exports.urgentLeave = async (req, res) => {
 exports.onboarding = async (req, res) => {
   try {
     const {
-      name, email, role, department,
-      contract_type, contract_start,
-      manager_email, salary
+      name,
+      email,
+      role,
+      department,
+      contract_type,
+      contract_start,
+      manager_email,
+      salary,
     } = req.body;
 
-    // ── Champs obligatoires ───────────────────────────────────────────────
+    // VALIDATION 1 : Champs requis
     if (!name || !email || !role || !contract_type) {
       return res.status(400).json({
         success: false,
@@ -382,232 +475,169 @@ exports.onboarding = async (req, res) => {
       });
     }
 
-    // ── Email déjà existant ───────────────────────────────────────────────
-    const existingEmployee = await Employee.findOne({ email });
+    // VALIDATION 2 : Type de contrat
+    if (!ALLOWED_CONTRACT_TYPES.includes(contract_type)) {
+      return res.status(400).json({
+        success: false,
+        error: 'invalid_contract_type',
+        message: `❌ contract_type invalide. Types acceptés : ${ALLOWED_CONTRACT_TYPES.join(', ')}`,
+      });
+    }
+
+    const normalizedEmail = normalizeEmail(email);
+
+    // VALIDATION 3 : Email unique
+    const existingEmployee = await Employee.findOne({ email: normalizedEmail }).lean();
     if (existingEmployee) {
-      await sendOnboardingRefusalEmail(
-        name, email,
-        `L'email ${email} est déjà associé à un compte existant.`
-      );
       return res.status(409).json({
         success: false,
         error: 'email_exists',
-        message: `❌ Un employé avec l'email ${email} existe déjà`
+        message: `❌ Un employé avec l'email ${normalizedEmail} existe déjà`,
       });
     }
 
-    // ── Limite par type de contrat ────────────────────────────────────────
-    const CONTRACT_LIMITS = {
-      Stage:     { max_simultaneous: 3,  max_per_year: 10  },
-      Freelance: { max_simultaneous: 5,  max_per_year: 20  },
-      CDD:       { max_simultaneous: 10, max_per_year: 30  },
-      CDI:       { max_simultaneous: 50, max_per_year: 100 }
-    };
-
-    const currentContractCount = await Employee.countDocuments({
-      'contract.type': contract_type,
-      status: { $in: ['active', 'onboarding'] }
-    });
-
-    const contractLimit = CONTRACT_LIMITS[contract_type];
-    if (contractLimit && currentContractCount >= contractLimit.max_simultaneous) {
-      await sendOnboardingRefusalEmail(
-        name, email,
-        `Limite de contrats ${contract_type} atteinte : ${currentContractCount}/${contractLimit.max_simultaneous} actuellement.`
-      );
-      return res.status(400).json({
-        success: false,
-        error: 'contract_limit_reached',
-        message: `❌ Limite atteinte : ${currentContractCount}/${contractLimit.max_simultaneous} ${contract_type} actuellement`
-      });
-    }
-
-    // ── Limite par département ────────────────────────────────────────────
-    if (department) {
-      const DEPARTMENT_LIMITS = {
-        Tech:       { max_employees: 5, max_interns: 2 },
-        Design:     { max_employees: 5, max_interns: 1 },
-        Marketing:  { max_employees: 10, max_interns: 2 },
-        RH:         { max_employees: 5,  max_interns: 0 },
-        Finance:    { max_employees: 8,  max_interns: 0 },
-        Support:    { max_employees: 12, max_interns: 1 },
-        Management: { max_employees: 10, max_interns: 0 }
-      };
-
-      const deptCount = await Employee.countDocuments({
-        department,
-        status: { $in: ['active', 'onboarding'] }
-      });
-
-      const deptLimit = DEPARTMENT_LIMITS[department];
-      if (deptLimit && deptCount >= deptLimit.max_employees) {
-        await sendOnboardingRefusalEmail(
-          name, email,
-          `Le département ${department} est complet : ${deptCount}/${deptLimit.max_employees} employés maximum.`
-        );
-        return res.status(400).json({
-          success: false,
-          error: 'department_limit_reached',
-          message: `❌ Département ${department} complet : ${deptCount}/${deptLimit.max_employees} employés`
+    // VALIDATION 4 : Limites par département (si renseigné)
+    const normalizedDepartment = typeof department === 'string' && department.trim() ? department.trim() : null;
+    if (normalizedDepartment) {
+      const deptLimit = DEPARTMENT_LIMITS[normalizedDepartment];
+      if (deptLimit) {
+        const deptCount = await Employee.countDocuments({
+          department: normalizedDepartment,
+          status: { $in: ['active', 'onboarding'] },
         });
-      }
 
-      if (contract_type === 'Stage' && deptLimit) {
-        const internCount = await Employee.countDocuments({
-          department,
-          'contract.type': 'Stage',
-          status: { $in: ['active', 'onboarding'] }
-        });
-        if (internCount >= deptLimit.max_interns) {
-          await sendOnboardingRefusalEmail(
-            name, email,
-            `Le département ${department} ne peut pas accueillir plus de ${deptLimit.max_interns} stagiaire(s) (${internCount} actuellement).`
-          );
+        if (deptCount >= deptLimit.max_employees) {
           return res.status(400).json({
             success: false,
-            error: 'intern_limit_reached',
-            message: `❌ ${department} : ${internCount}/${deptLimit.max_interns} stagiaire(s) maximum`
+            error: 'department_limit_reached',
+            message: `❌ Département ${normalizedDepartment} complet : ${deptCount}/${deptLimit.max_employees} employés`,
           });
+        }
+
+        // Limite de stagiaires par département
+        if (contract_type === 'Stage') {
+          const internCount = await Employee.countDocuments({
+            department: normalizedDepartment,
+            'contract.type': 'Stage',
+            status: { $in: ['active', 'onboarding'] },
+          });
+
+          if (internCount >= deptLimit.max_interns) {
+            return res.status(400).json({
+              success: false,
+              error: 'intern_limit_reached',
+              message: `❌ ${normalizedDepartment} : ${internCount}/${deptLimit.max_interns} stagiaire(s) maximum`,
+            });
+          }
         }
       }
     }
 
-    // ── Postes uniques ────────────────────────────────────────────────────
-    const UNIQUE_ROLES = ['CEO', 'Directeur Général', 'CFO', 'CTO', 'DRH'];
-    const isUniqueRole = UNIQUE_ROLES.some(ur => role.toLowerCase().includes(ur.toLowerCase()));
+    // VALIDATION 5 : Rôles autorisés (règles métier)
+    // 5a) Postes uniques
+    const roleText = typeof role === 'string' ? role.trim() : '';
+    const isUniqueRole = UNIQUE_ROLES.some((uniqueRole) =>
+      roleText.toLowerCase().includes(uniqueRole.toLowerCase())
+    );
+
     if (isUniqueRole) {
       const existingRole = await Employee.findOne({
-        role: new RegExp(role, 'i'),
-        status: { $in: ['active', 'onboarding'] }
-      });
+        role: new RegExp(roleText, 'i'),
+        status: { $in: ['active', 'onboarding'] },
+      }).lean();
+
       if (existingRole) {
-        await sendOnboardingRefusalEmail(
-          name, email,
-          `Le poste "${role}" est déjà occupé. Ce poste est unique dans l'entreprise.`
-        );
         return res.status(400).json({
           success: false,
           error: 'unique_role_taken',
-          message: `❌ Le poste "${role}" est déjà occupé par ${existingRole.name}`
+          message: `❌ Le poste "${roleText}" est déjà occupé par ${existingRole.name}`,
         });
       }
     }
 
-    // ── Combinaisons interdites ───────────────────────────────────────────
-    const FORBIDDEN_COMBINATIONS = {
-      Stage:     ['Manager', 'CEO', 'Directeur', 'Team Lead', 'Chef', 'Responsable', 'Senior'],
-      Freelance: ['CEO', 'Directeur Général', 'DRH', 'CFO', 'CTO']
-    };
-    const forbiddenRoles = FORBIDDEN_COMBINATIONS[contract_type];
-    if (forbiddenRoles) {
-      const isForbidden = forbiddenRoles.some(fr => role.toLowerCase().includes(fr.toLowerCase()));
+    // 5b) Cohérence poste / contrat
+    const forbidden = FORBIDDEN_ROLE_COMBINATIONS[contract_type];
+    if (Array.isArray(forbidden) && forbidden.length > 0) {
+      const isForbidden = forbidden.some((forbiddenRole) =>
+        roleText.toLowerCase().includes(forbiddenRole.toLowerCase())
+      );
+
       if (isForbidden) {
-        await sendOnboardingRefusalEmail(
-          name, email,
-          `La combinaison contrat "${contract_type}" et poste "${role}" n'est pas autorisée.`
-        );
         return res.status(400).json({
           success: false,
           error: 'invalid_role_contract_combination',
-          message: `❌ Un ${contract_type} ne peut pas être "${role}"`
+          message: `❌ Un ${contract_type} ne peut pas être "${roleText}"`,
         });
       }
     }
 
-    // ── Limite quotidienne ────────────────────────────────────────────────
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today);
-    tomorrow.setDate(today.getDate() + 1);
-    const onboardingsToday = await Employee.countDocuments({
-      createdAt: { $gte: today, $lt: tomorrow }
-    });
-    if (onboardingsToday >= 5) {
-      await sendOnboardingRefusalEmail(
-        name, email,
-        `La limite de ${onboardingsToday}/5 demandes d'embauche par jour est atteinte. Veuillez réessayer demain.`
-      );
-      return res.status(400).json({
-        success: false,
-        error: 'daily_limit_reached',
-        message: `❌ Limite quotidienne atteinte : ${onboardingsToday}/5 onboardings aujourd'hui.`
-      });
-    }
-
-    // ── Création employé ──────────────────────────────────────────────────
-    console.log(`🤖 HERA ONBOARDING : Création de ${name} (${role})`);
-
-    let leaveBalance, contractDuration;
+    let leaveBalance;
     switch (contract_type) {
-      case 'CDI':      leaveBalance = { annual: 25, sick: 10, urgent: 3 }; contractDuration = null; break;
-      case 'CDD':      leaveBalance = { annual: 20, sick: 10, urgent: 2 }; contractDuration = 12;   break;
-      case 'Stage':    leaveBalance = { annual: 5,  sick: 5,  urgent: 1 }; contractDuration = 6;    break;
-      case 'Freelance':leaveBalance = { annual: 0,  sick: 0,  urgent: 0 }; contractDuration = 12;   break;
-      default:         leaveBalance = { annual: 25, sick: 10, urgent: 3 }; contractDuration = null;
+      case 'CDI':
+        leaveBalance = { annual: 25, sick: 10, urgent: 3 };
+        break;
+      case 'CDD':
+        leaveBalance = { annual: 20, sick: 10, urgent: 2 };
+        break;
+      case 'Stage':
+        leaveBalance = { annual: 5, sick: 5, urgent: 1 };
+        break;
+      case 'Freelance':
+        leaveBalance = { annual: 0, sick: 0, urgent: 0 };
+        break;
+      default:
+        leaveBalance = { annual: 25, sick: 10, urgent: 3 };
     }
 
     const startDate = contract_start ? new Date(contract_start) : new Date();
-    const endDate = contractDuration
-      ? new Date(startDate.getTime() + contractDuration * 30 * 24 * 60 * 60 * 1000)
-      : null;
+    if (isNaN(startDate.getTime())) {
+      return res.status(400).json({
+        success: false,
+        error: 'invalid_contract_start',
+        message: '❌ contract_start invalide (format incorrect)',
+      });
+    }
+
+    const endDate = computeContractEnd(contract_type, startDate);
+    const salaryValue = parseOptionalNumber(salary);
 
     const employee = await Employee.create({
-      name, email, role,
-      department: department || 'Non défini',
-      contract: { type: contract_type, start: startDate, end: endDate },
+      name,
+      email: normalizedEmail,
+      role: roleText,
+      department: normalizedDepartment || 'Non défini',
+      contract: { 
+        type: contract_type, 
+        start: startDate,
+        end: endDate,
+      },
       manager_email: manager_email || null,
-      salary: salary || null,
+      salary: salaryValue,
       leave_balance: leaveBalance,
       leave_balance_used: { annual: 0, sick: 0, urgent: 0 },
       leave_balance_year: new Date().getFullYear(),
       status: 'onboarding'
     });
 
-    console.log(`✅ Employé créé : ${employee._id}`);
-
-    // ── Génération mot de passe temporaire ───────────────────────────────
-    const tempPassword = Math.random().toString(36).slice(-8);
-    const hashedPassword = await bcrypt.hash(tempPassword, 10);
-    employee.password = hashedPassword;
-    await employee.save();
-    console.log(`🔑 Mot de passe temporaire pour ${email} : ${tempPassword}`);
-
     // ── Log action ────────────────────────────────────────────────────────
     await HeraAction.create({
       employee_id: employee._id,
-      action_type: 'onboarding_started',
+      action_type: 'employee_onboarding_started',
       details: {
         name: employee.name,
         email: employee.email,
         role: employee.role,
         department: employee.department,
-        contract_type,
-        start_date: startDate,
-        leave_balance: leaveBalance,
+        contract_type: employee.contract?.type,
+        start_date: employee.contract?.start,
+        end_date: employee.contract?.end,
+        status: employee.status,
+        salary: salaryValue,
       },
       triggered_by: 'hera_auto',
     });
 
-    // ── Envoi email de bienvenue avec mdp ─────────────────────────────────
-    try {
-      await n8n.onboarding({
-        employee_name: name,
-        employee_email: email,
-        role,
-        department: department || 'Non défini',
-        start_date: startDate.toISOString().split('T')[0],
-        contract_type,
-        leave_balance: leaveBalance,
-        temp_password: tempPassword,
-        manager_email,
-        status: 'approved'
-      });
-      console.log('✅ Email de bienvenue envoyé avec mot de passe temporaire');
-    } catch (emailError) {
-      console.error('⚠️ Erreur envoi email:', emailError.message);
-    }
-
-    return res.status(201).json({
+    res.status(201).json({
       success: true,
       message: `✅ Onboarding démarré pour ${name}`,
       employee_id: employee._id,
@@ -616,16 +646,11 @@ exports.onboarding = async (req, res) => {
         email: employee.email,
         role: employee.role,
         department: employee.department,
-        contract_type: employee.contract.type,
-        start_date: employee.contract.start,
-        end_date: employee.contract.end,
-        status: employee.status
+        contract_type: employee.contract?.type,
+        start_date: employee.contract?.start,
+        end_date: employee.contract?.end,
+        status: employee.status,
       },
-      leave_balance: leaveBalance,
-      emails_sent: {
-        welcome_email: true,
-        manager_notification: !!manager_email
-      }
     });
 
   } catch (err) {
@@ -671,6 +696,9 @@ exports.getLeaves = async (req, res) => {
     return res.status(500).json({ success: false, error: 'server_error', message: error.message });
   }
 };
+
+// Alias rétro-compat : certains clients utilisent encore /leave-history
+exports.getLeaveHistory = exports.getLeaves;
 
 // ── Promotion ──────────────────────────────────────────────────────────────
 exports.promote = async (req, res) => {
@@ -743,10 +771,15 @@ exports.getHistory = async (req, res) => {
 
 exports.getAdminStats = async (req, res) => {
   try {
-    const totalEmployees = await Employee.countDocuments({ status: 'active' });
-    const today = new Date(); today.setHours(0, 0, 0, 0);
-    const tomorrow = new Date(today); tomorrow.setDate(tomorrow.getDate() + 1);
-
+    const totalEmployees = await Employee.countDocuments({
+      status: { $in: ['active', 'onboarding'] },
+    });
+    
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+    
     const onLeaveToday = await LeaveRequest.countDocuments({
       status: 'approved',
       start_date: { $lte: tomorrow },
@@ -776,9 +809,15 @@ exports.getAdminStats = async (req, res) => {
 
 exports.getAllEmployees = async (req, res) => {
   try {
+    console.log('📡 Récupération des employés...');
+    
     const employees = await Employee.find({ status: { $in: ['active', 'onboarding'] } })
-      .select('-salary -__v').sort({ name: 1 }).lean();
-
+      .select('-salary -__v')
+      .sort({ name: 1 })
+      .lean();
+    
+    console.log(`✅ ${employees.length} employés trouvés`);
+    
     const employeesWithBalances = employees.map(emp => {
       const calc = (type) => ({
         total: emp.leave_balance?.[type] || 0,
@@ -793,7 +832,23 @@ exports.getAllEmployees = async (req, res) => {
         department: emp.department || 'Non défini',
         status: emp.status || 'active',
         start_date: emp.contract?.start || null,
-        balances: { annual: calc('annual'), sick: calc('sick'), urgent: calc('urgent') }
+        balances: {
+          annual: {
+            total: annualTotal,
+            used: annualUsed,
+            remaining: annualRemaining
+          },
+          sick: {
+            total: sickTotal,
+            used: sickUsed,
+            remaining: sickRemaining
+          },
+          urgent: {
+            total: urgentTotal,
+            used: urgentUsed,
+            remaining: urgentRemaining
+          }
+        }
       };
     });
 
@@ -828,6 +883,69 @@ exports.getRecentActions = async (req, res) => {
     return res.json({ success: true, recent_actions: enrichedLeaves, total: enrichedLeaves.length });
   } catch (error) {
     console.error('❌ Erreur getRecentActions:', error);
-    return res.status(500).json({ success: false, error: 'server_error', message: error.message });
+    return res.status(500).json({
+      success: false,
+      error: 'server_error',
+      message: error.message
+    });
+  }
+};
+
+/**
+ * Admin: récupère toutes les actions (HeraAction)
+ */
+exports.getAllActions = async (req, res) => {
+  try {
+    const limit = Math.min(parseInt(req.query.limit, 10) || 100, 500);
+    const actions = await HeraAction.find()
+      .sort({ created_at: -1 })
+      .limit(limit)
+      .lean();
+
+    return res.json({ success: true, actions, total: actions.length });
+  } catch (error) {
+    console.error('❌ Erreur getAllActions:', error);
+    return res.status(500).json({
+      success: false,
+      error: 'server_error',
+      message: error.message,
+    });
+  }
+};
+
+/**
+ * Admin: supprime une action (HeraAction)
+ */
+exports.deleteAction = async (req, res) => {
+  try {
+    const { action_id } = req.params;
+
+    if (!action_id) {
+      return res.status(400).json({
+        success: false,
+        error: 'missing_fields',
+        message: '❌ action_id requis',
+      });
+    }
+
+    const deleted = await HeraAction.findByIdAndDelete(action_id);
+    if (!deleted) {
+      return res.status(404).json({
+        success: false,
+        error: 'not_found',
+        message: '❌ Action introuvable',
+      });
+    }
+
+    return res.json({ success: true, message: '🗑️ Action supprimée', action_id });
+  } catch (error) {
+    // CastError si action_id invalide
+    const status = error?.name === 'CastError' ? 400 : 500;
+    console.error('❌ Erreur deleteAction:', error);
+    return res.status(status).json({
+      success: false,
+      error: status === 400 ? 'invalid_id' : 'server_error',
+      message: error.message,
+    });
   }
 };

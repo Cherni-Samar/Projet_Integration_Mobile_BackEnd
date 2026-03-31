@@ -16,12 +16,25 @@ router.post('/login', async (req, res) => {
     if (!employee)
       return res.json({ success: false, message: 'Employé non trouvé' });
 
+    // ❌ Compte bloqué (inactive)
+    if (employee.status === 'inactive')
+      return res.json({ success: false, message: 'Compte désactivé. Contactez les RH.' });
+
     if (!employee.password)
       return res.json({ success: false, message: 'Compte non configuré. Contactez les RH.' });
 
     const valid = await bcrypt.compare(password, employee.password);
     if (!valid)
       return res.json({ success: false, message: 'Mot de passe incorrect' });
+
+    // ✅ Première connexion → onboarding → active
+    if (employee.status === 'onboarding') {
+      await Employee.findByIdAndUpdate(employee._id, {
+        status: 'active',
+        updated_at: new Date()
+      });
+      employee.status = 'active';
+    }
 
     const token = jwt.sign(
       { id: employee._id },

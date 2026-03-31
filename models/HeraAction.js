@@ -10,6 +10,9 @@ const heraActionSchema = new mongoose.Schema({
       'leave_approved','leave_pending',      // ✅ AJOUTE ICI
       'leave_refused', 'leave_urgent',
       'onboarding_started', 'onboarding_completed',
+      // Employee lifecycle (newer, more explicit)
+      'employee_onboarding_started',
+      'employee_activated',
       'promotion', 'offboarding_started', 'offboarding_completed',
       'absence_alert', 'performance_alert',
       'contract_renewal', 'contract_end',

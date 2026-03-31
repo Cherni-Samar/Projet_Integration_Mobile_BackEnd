@@ -67,6 +67,10 @@ exports.signup = async (req, res, next) => {
           email: user.email,
           name: user.name,
           isEmailVerified: user.isEmailVerified,
+          subscriptionPlan: user.subscriptionPlan,
+          maxAgentsAllowed: user.maxAgentsAllowed,
+          activeAgents: user.activeAgents,
+          energyBalance: user.energyBalance,
         },
         token: token,
       }
@@ -243,7 +247,11 @@ exports.login = async (req, res, next) => {
           email: user.email,
           name: user.name,
           isEmailVerified: user.isEmailVerified,
-          lastLoginAt: user.lastLoginAt
+          lastLoginAt: user.lastLoginAt,
+          subscriptionPlan: user.subscriptionPlan,
+          maxAgentsAllowed: user.maxAgentsAllowed,
+          activeAgents: user.activeAgents,
+          energyBalance: user.energyBalance,
         },
         token: token
       }
@@ -274,6 +282,10 @@ exports.getMe = async (req, res) => {
           email: user.email,
           name: user.name,
           isEmailVerified: user.isEmailVerified,
+          subscriptionPlan: user.subscriptionPlan,
+          maxAgentsAllowed: user.maxAgentsAllowed,
+          activeAgents: user.activeAgents,
+          energyBalance: user.energyBalance,
           createdAt: user.createdAt,
           lastLoginAt: user.lastLoginAt
         }
