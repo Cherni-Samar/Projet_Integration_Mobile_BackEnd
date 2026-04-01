@@ -1132,63 +1132,63 @@ exports.deleteAction = async (req, res) => {
 };
 
 exports.requestLeave = async (req, res, next) => {
-  try {
-    console.log('🔥 ROUTE VAPI /request-leave APPELÉE');
-    console.log('📦 BODY REÇU =>', req.body);
+  console.log('📦 BODY =>', JSON.stringify(req.body, null, 2));
 
-    const { employee_name, type, start_date, end_date, reason } = req.body;
+try {
+const Employee = require('../models/Employee');
 
-    console.log('📞 VAPI CALL =>', req.body);
+// ✅ Lire directement depuis req.body
+const employee_name = req.body?.employee_name;
+const type = req.body?.type;
+const start_date = req.body?.start_date;
+const end_date = req.body?.end_date;
+const reason = req.body?.reason;
 
-    if (!employee_name || !type || !start_date || !end_date) {
-      return res.status(400).json({
-        success: false,
-        error: 'missing_fields',
-        message:
-          '❌ Champs requis : employee_name, type, start_date, end_date',
-      });
-    }
+console.log('📞 ARGS =>', { employee_name, type, start_date, end_date, reason });
 
-    // 🔎 find employee
-    let employee = await Employee.findOne({ name: employee_name });
+if (!employee_name || !type || !start_date || !end_date) {
+return res.status(400).json({
+success: false,
+error: 'missing_fields',
+message: '❌ Champs requis manquants',
+});
+}
 
-    if (!employee) {
-      employee = await Employee.findOne({
-        name: { $regex: `^${employee_name}$`, $options: 'i' },
-      });
-    }
+let employee = await Employee.findOne({ name: employee_name });
+if (!employee) {
+employee = await Employee.findOne({
+name: { $regex: `^${employee_name}$`, $options: 'i' },
+});
+}
 
-    if (!employee) {
-      return res.status(404).json({
-        success: false,
-        error: 'employee_not_found',
-        message: `❌ Employé introuvable : ${employee_name}`,
-      });
-    }
+if (!employee) {
+return res.status(404).json({
+success: false,
+error: 'employee_not_found',
+message: `❌ Employé introuvable : ${employee_name}`,
+});
+}
 
-    // 🔄 transform body for hera
-    req.body = {
-      employee_id: employee._id.toString(),
-      employee_email: employee.email,
-      type,
-      start_date,
-      end_date,
-      reason: reason || 'Congé demandé via Hera Voice',
-    };
+req.body = {
+employee_id: employee._id.toString(),
+employee_email: employee.email,
+type,
+start_date,
+end_date,
+reason: reason || 'Congé demandé via Hera Voice',
+};
 
-    console.log('✅ BODY ENVOYÉ À HERA =>', req.body);
+console.log('✅ BODY ENVOYÉ À HERA =>', req.body);
+return hera.requestLeave(req, res, next);
 
-    return hera.requestLeave(req, res, next);
-
-  } catch (error) {
-    console.error('❌ Erreur requestLeave:', error);
-
-    return res.status(500).json({
-      success: false,
-      error: 'server_error',
-      message: '❌ Erreur serveur : ' + error.message,
-    });
-  }
+} catch (error) {
+console.error('❌ Erreur:', error);
+return res.status(500).json({
+success: false,
+error: 'server_error',
+message: '❌ Erreur serveur : ' + error.message,
+});
+}
 };
 // ══════════════════════════════════════════════════════════════════════════
 // NOUVELLE ROUTE : Envoyer un email à Echo
