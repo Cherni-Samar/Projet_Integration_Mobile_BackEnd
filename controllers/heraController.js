@@ -1130,3 +1130,130 @@ exports.deleteAction = async (req, res) => {
     });
   }
 };
+
+exports.requestLeave = async (req, res, next) => {
+  try {
+    console.log('🔥 ROUTE VAPI /request-leave APPELÉE');
+    console.log('📦 BODY REÇU =>', req.body);
+
+    const { employee_name, type, start_date, end_date, reason } = req.body;
+
+    console.log('📞 VAPI CALL =>', req.body);
+
+    if (!employee_name || !type || !start_date || !end_date) {
+      return res.status(400).json({
+        success: false,
+        error: 'missing_fields',
+        message:
+          '❌ Champs requis : employee_name, type, start_date, end_date',
+      });
+    }
+
+    // 🔎 find employee
+    let employee = await Employee.findOne({ name: employee_name });
+
+    if (!employee) {
+      employee = await Employee.findOne({
+        name: { $regex: `^${employee_name}$`, $options: 'i' },
+      });
+    }
+
+    if (!employee) {
+      return res.status(404).json({
+        success: false,
+        error: 'employee_not_found',
+        message: `❌ Employé introuvable : ${employee_name}`,
+      });
+    }
+
+    // 🔄 transform body for hera
+    req.body = {
+      employee_id: employee._id.toString(),
+      employee_email: employee.email,
+      type,
+      start_date,
+      end_date,
+      reason: reason || 'Congé demandé via Hera Voice',
+    };
+
+    console.log('✅ BODY ENVOYÉ À HERA =>', req.body);
+
+    return hera.requestLeave(req, res, next);
+
+  } catch (error) {
+    console.error('❌ Erreur requestLeave:', error);
+
+    return res.status(500).json({
+      success: false,
+      error: 'server_error',
+      message: '❌ Erreur serveur : ' + error.message,
+    });
+  }
+};
+// ══════════════════════════════════════════════════════════════════════════
+// NOUVELLE ROUTE : Envoyer un email à Echo
+// ══════════════════════════════════════════════════════════════════════════
+
+exports.sendEmailToEcho = async (req, res) => {
+  const { to, subject, content, from } = req.body;
+ 
+  try {
+    const response = await fetch('http://localhost:3000/api/emails/receive', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        subject: subject,
+        sender: from || 'hera@e-team.com',
+        content: content
+      })
+    });
+   
+    const analysis = await response.json();
+   
+    res.json({
+      success: true,
+      message: 'Email envoyé à Echo',
+      analysis: analysis
+    });
+   
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+};
+// ══════════════════════════════════════════════════════════════════════════
+// RECEVOIR UN EMAIL D'ECHO
+// ══════════════════════════════════════════════════════════════════════════
+
+exports.receiveEmailFromEcho = async (req, res) => {
+  const { subject, sender, content, type } = req.body;
+ 
+  try {
+    console.log('📧 Hera a reçu un email de Echo:');
+    console.log('   Sujet:', subject);
+    console.log('   Expéditeur:', sender);
+    console.log('   Contenu:', content);
+   
+    // Analyser l'email avec l'IA (optionnel)
+    // Tu peux appeler Groq ici si tu veux qu'Hera analyse aussi
+   
+    // Stocker dans une collection "hera_emails" si besoin
+    // await HeraEmail.create({ subject, sender, content, receivedAt: new Date() });
+   
+    res.json({
+      success: true,
+      message: 'Email reçu par Hera',
+      receivedAt: new Date().toISOString(),
+      email: { subject, sender, content }
+    });
+   
+  } catch (error) {
+    console.error('❌ Erreur receiveEmailFromEcho:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+};
