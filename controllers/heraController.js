@@ -6,6 +6,7 @@ const mailService = require('../utils/emailService'); // Chemin corrigé selon t
 const heraAgent = require('../services/hera.agent'); // Ton service LangChain
 const JobOffer = require('../models/JobOffer');
 const Candidate = require('../models/Candidate');
+const mongoose = require('mongoose'); // ✅ AJOUTE CETTE LIGNE TOUT EN HAUT
 // 💡 DÉFINITION DES LIMITES (Indispensable pour check-staffing)
 const DEPARTMENT_LIMITS = {
   Tech: { max_employees: 20, max_interns: 2 },
@@ -100,76 +101,87 @@ exports.vapiWebhook = async (req, res) => {
     res.json({ result: "Désolée, j'ai rencontré une erreur technique." });
   }
 };
-// ── FONCTION : CHECK STAFFING ──
+// ── FONCTION : CHECK STAFFING (Alerte Echo) ──
 exports.checkStaffingNeeds = async (req, res) => {
   try {
     const report = [];
     const departments = Object.keys(DEPARTMENT_LIMITS);
-    const startOfToday = new Date();
-    startOfToday.setHours(0, 0, 0, 0);
+    const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
 
     for (const dept of departments) {
       const count = await Employee.countDocuments({ department: dept, status: 'active' });
       const limit = DEPARTMENT_LIMITS[dept].max_employees;
 
-      // 1. Détection du manque
       if (count < limit * 0.8) {
-        
-        // 2. 🛡️ ANTI-SPAM : Vérifier si Hera a déjà alerté Echo pour ce département AUJOURD'HUI
         const alreadyNotified = await HeraAction.findOne({
-          action_type: 'absence_alert',
-          'details.department': dept,
-          created_at: { $gte: startOfToday }
+          action_type: 'absence_alert', 'details.department': dept, created_at: { $gte: startOfToday }
         });
 
-        if (alreadyNotified) {
-          report.push({ dept, status: 'Déjà notifié aujourd\'hui', count });
-          continue; // On passe au département suivant sans envoyer de mail
+        if (!alreadyNotified) {
+          // ✅ Utilise l'alerte STAFFING (Pas de bienvenue)
+          await mailService.sendStaffingAlert("echo-agent@e-team.com", {
+            department: dept, count, max: limit, message: `Manque d'effectif en ${dept}.`
+          });
+
+          await HeraAction.create({
+            action_type: 'absence_alert', details: { department: dept, count, limit }, triggered_by: 'hera_auto'
+          });
+          report.push({ dept, status: 'Echo notifié' });
         }
-
-        // 3. Si pas encore notifié, on envoie le mail
-        await mailService.sendWelcomeEmail(
-          "echo-agent@e-team.com", 
-          `Hera : Alerte Recrutement ${dept}`, 
-          `Besoin en ${dept}. Merci de poster une annonce.`
-        );
-
-        // 4. On enregistre l'action pour s'en souvenir
-        await HeraAction.create({
-          action_type: 'absence_alert',
-          details: { department: dept, count: count, limit: limit },
-          triggered_by: 'hera_auto'
-        });
-
-        report.push({ dept, status: 'Echo notifié (Nouveau)', count });
-      } else {
-        report.push({ dept, status: 'Staffing OK', count });
       }
     }
-    
     res.json({ success: true, report });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };
 
+
 // ── FONCTION : CANDIDATURE (ATS) ──
+// ── FONCTION : CANDIDATURE (ATS) ──
+// --- Garde ta fonction getNextSessionDate() que nous avons écrite avant ---
+
 exports.processCandidacy = async (req, res) => {
   try {
-    const { name, email, job_offer_id } = req.body;
-    const score = Math.floor(Math.random() * 100); 
+    const { name, email, resume_text } = req.body;
+
+    const analysis = await heraAgent.analyzeCandidate(resume_text, "Futur talent E-Team");
+    const score = analysis.score || 0;
+
     let status = 'applied';
     let meeting_link = null;
+    let interview_date = null;
 
     if (score > 70) {
       status = 'interview_scheduled';
-      meeting_link = `https://meet.e-team.com/${Math.random().toString(36).substring(7)}`;
-      await mailService.sendWelcomeEmail(email, name); // Envoi d'un mail au candidat
+      meeting_link = `https://meet.jit.si/ETeam_Discovery_Session_${Math.floor(Math.random()*1000)}`;
+      
+      // On calcule la date du prochain vendredi à 14h
+      const dateObj = getNextSessionDate();
+      const formattedDate = dateObj.toLocaleDateString('fr-FR', {
+        weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit'
+      });
+
+      // ✅ ON ENVOIE L'INVITATION PROFESSIONNELLE
+      await mailService.sendCandidacyInvitation(email, {
+        name,
+        meeting_link,
+        interview_date: formattedDate // On passe la date ici
+      });
+    } else {
+      await mailService.sendCandidacyConfirmation(email, name);
     }
 
-    const candidate = await Candidate.create({ name, email, job_offer_id, status, score_ia: score, meeting_link });
-    res.json({ success: true, score_ia: score, status, meeting_link, candidate });
-  } catch (err) { res.status(500).json({ error: err.message }); }
-};
+    // Sauvegarde MongoDB
+    await Candidate.create({
+      name, email, status, score_ia: score, 
+      meeting_link, interview_date: getNextSessionDate(), resume_text
+    });
 
+    res.json({ success: true, message: "Demande traitée avec succès" });
+
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
 // ── 2. GÉNÉRATION DE DOCUMENTS (CONTRAT / ATTESTATION) ────────────────────
 exports.generateHeraDoc = async (req, res) => {
   try {
@@ -203,104 +215,127 @@ exports.generateHeraDoc = async (req, res) => {
 // ══════════════════════════════════════════════════════════════════════════
 // LOGIQUE DE DÉCISION RH (Utilisée par Chat Admin ET Formulaire Employé)
 // ══════════════════════════════════════════════════════════════════════════
-
 async function executeLeaveDecision(data) {
   const { employee_id, type, start_date, end_date, reason } = data;
-  
   const start = new Date(start_date);
   const end = new Date(end_date);
   const days = calculateDays(start, end);
 
-  // 1. Vérification de l'employé
   const employee = await Employee.findById(employee_id);
   if (!employee) return { success: false, message: "Employé non trouvé." };
 
-  // 2. Vérification Solde
-  const balance = employee.leave_balance?.[type] || 0;
-  const used = employee.leave_balance_used?.[type] || 0;
-  const remaining = balance - used;
+  const remaining = (employee.leave_balance?.[type] || 0) - (employee.leave_balance_used?.[type] || 0);
 
   if (days > remaining) {
     const refusal_reason = `Solde insuffisant (${remaining}j restants).`;
-    
-    // ✅ ENVOI EMAIL DE REFUS (Solde)
+    // ✅ Utilise la notification de CONGÉ (Refus)
     await mailService.sendLeaveNotification(employee.email, {
-      employee_name: employee.name,
-      start_date: start_date,
-      end_date: end_date,
-      status: 'refused',
-      reason_decision: refusal_reason,
-      days: days
+      employee_name: employee.name, start_date, end_date, status: 'refused', reason_decision: refusal_reason, days
     });
-
     return { success: false, message: refusal_reason };
   }
 
-  // 3. Vérification Simultanée (Max 2 personnes)
   const simultaneousCount = await LeaveRequest.countDocuments({
     status: 'approved',
     employee_id: { $ne: employee_id },
     $or: [{ start_date: { $lte: end }, end_date: { $gte: start } }]
   });
 
-  let status = 'approved';
-  let decision_reason = 'Capacité OK';
-  
-  if (type !== 'urgent' && simultaneousCount >= 2) {
-    status = 'refused';
-    decision_reason = `Refusé : Déjà ${simultaneousCount} personnes en congé.`;
-  }
+  let status = (type === 'urgent' || simultaneousCount < 2) ? 'approved' : 'refused';
+  let decision_reason = status === 'approved' ? 'Capacité OK' : `Déjà ${simultaneousCount} personnes en congé.`;
 
-  // 4. Débit Énergie (5 unités sur le manager)
-  await User.findOneAndUpdate(
-    { email: normalizeEmail(employee.manager_email), energyBalance: { $gte: 5 } },
-    { $inc: { energyBalance: -5 } }
-  );
-
-  // 5. Sauvegarde Base de Données (Demande de congé)
   const leave = await LeaveRequest.create({
-    employee_id,
-    employee_email: employee.email,
-    type,
-    start_date: start,
-    end_date: end,
-    days,
-    reason: reason || 'Demande RH',
-    status
+    employee_id, employee_email: employee.email, type, start_date: start, end_date: end, days, reason, status
   });
 
-  // 6. Enregistrement de l'action HeraAction
   await HeraAction.create({
-    employee_id,
-    action_type: status === 'approved' ? 'leave_approved' : 'leave_refused',
-    details: { type, days, decision_reason, start_date, end_date },
-    triggered_by: 'hera_auto'
+    employee_id, action_type: status === 'approved' ? 'leave_approved' : 'leave_refused',
+    details: { type, days, decision_reason }, triggered_by: 'hera_auto'
   });
 
-  // 7. Mise à jour du solde de l'employé si approuvé
   if (status === 'approved') {
-    await Employee.findByIdAndUpdate(employee_id, { 
-      $inc: { [`leave_balance_used.${type}`]: days } 
-    });
+    await Employee.findByIdAndUpdate(employee_id, { $inc: { [`leave_balance_used.${type}`]: days } });
   }
 
-  // 8. ✅ ENVOI EMAIL FINAL (Approuvé ou Refusé par capacité)
+  // ✅ Utilise la notification de CONGÉ (Final)
   await mailService.sendLeaveNotification(employee.email, {
-    employee_name: employee.name,
-    start_date: start_date,
-    end_date: end_date,
-    status: status, // 'approved' ou 'refused'
-    reason_decision: decision_reason,
-    days: days
+    employee_name: employee.name, start_date, end_date, status, reason_decision: decision_reason, days
   });
 
-  return { 
-    success: true, 
-    status, 
-    message: `Décision : ${status}. ${decision_reason}`, 
-    leave 
-  };
+  return { success: true, status, message: `Décision : ${status}. ${decision_reason}`, leave };
 }
+// --- Helper pour calculer le prochain vendredi à 14h ---
+// --- Helper pour calculer le prochain vendredi à 14h ---
+function getNextSessionDate() {
+  const now = new Date();
+  const nextFriday = new Date();
+  nextFriday.setDate(now.getDate() + (5 - now.getDay() + 7) % 7);
+  nextFriday.setHours(14, 0, 0, 0);
+  if (now > nextFriday) nextFriday.setDate(nextFriday.getDate() + 7);
+  return nextFriday;
+}
+// ── FONCTION : CANDIDATURE (ATS) - VERSION UNIQUE ET NETTOYÉE ──
+exports.processCandidacy = async (req, res) => {
+  console.log("📩 [1/4] Nouvelle candidature reçue pour :", req.body.name);
+
+  try {
+    const { name, email, resume_text, job_offer_id } = req.body;
+
+    // 1. Analyse IA
+    console.log("🧠 [2/4] Hera analyse le CV via Groq...");
+    const analysis = await heraAgent.analyzeCandidate(resume_text || "Aucun CV fourni", "Profil recherché");
+    const score = analysis.score || 0;
+    console.log(`📊 Score attribué par Hera : ${score}%`);
+
+    let status = 'applied';
+    let meeting_link = null;
+    let interview_date = null;
+
+    if (score > 70) {
+      console.log("✨ Score élevé (>70), génération d'un lien de réunion...");
+      status = 'interview_scheduled';
+      meeting_link = `https://meet.jit.si/ETeam_Session_${new Date().getTime()}`;
+      interview_date = getNextSessionDate();
+
+      const formattedDate = interview_date.toLocaleDateString('fr-FR', {
+        weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit'
+      });
+
+      // ENVOI DU MAIL INVITATION
+      console.log("📧 Tentative d'envoi du mail d'invitation à :", email);
+      await mailService.sendCandidacyInvitation(email, {
+        name,
+        score,
+        meeting_link,
+        interview_date: formattedDate
+      });
+    } else {
+      console.log("ℹ️ Score insuffisant pour entretien immédiat. Envoi confirmation simple.");
+      await mailService.sendCandidacyConfirmation(email, name);
+    }
+
+    // 2. Gestion de l'ID Offre (Optionnel)
+    let validJobId = null;
+    if (job_offer_id && mongoose.Types.ObjectId.isValid(job_offer_id)) {
+      validJobId = job_offer_id;
+    }
+
+    // 3. Sauvegarde
+    console.log("💾 [3/4] Enregistrement dans MongoDB...");
+    const candidate = await Candidate.create({
+      name, email, status, score_ia: score, 
+      meeting_link, interview_date, resume_text,
+      job_offer_id: validJobId
+    });
+
+    console.log("✅ [4/4] Processus terminé avec succès pour", name);
+    res.json({ success: true, score_ia: score, candidate });
+
+  } catch (err) {
+    console.error("❌ ERREUR DANS processCandidacy :", err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+};
 
 // ══════════════════════════════════════════════════════════════════════════
 // EXPORTS POUR LES ROUTES
@@ -351,23 +386,15 @@ exports.urgentLeave = async (req, res) => {
   return exports.requestLeave(req, res);
 };
 
+// ── FONCTION : ONBOARDING (Vraie Bienvenue) ──
 exports.onboarding = async (req, res) => {
   try {
-    const { name, email, role, contract_type, contract_start } = req.body;
-    const normalizedEmail = normalizeEmail(email);
+    const employee = await Employee.create(req.body);
     
-    // Calcul fin de contrat
-    const startDate = contract_start ? new Date(contract_start) : new Date();
-    const endDate = computeContractEnd(contract_type, startDate);
-
-    const employee = await Employee.create({
-      ...req.body,
-      email: normalizedEmail,
-      contract: { type: contract_type, start: startDate, end: endDate },
-      status: 'onboarding'
-    });
-
-    res.status(201).json({ success: true, message: `Onboarding de ${name} créé`, employee_id: employee._id });
+    // ✅ ICI et UNIQUEMENT ICI : Mail de Bienvenue
+    await mailService.sendWelcomeEmail(employee.email, employee.name);
+    
+    res.status(201).json({ success: true, message: "Employé créé et mail de bienvenue envoyé" });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };
 

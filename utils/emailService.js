@@ -313,10 +313,89 @@ const sendStaffingAlert = async (targetEmail, details) => {
     return true;
   } catch (error) { console.error('❌ Erreur alerte staffing:', error); return false; }
 };
+// 1. Pour confirmer la réception simple
+const sendCandidacyConfirmation = async (email, name) => {
+  try {
+    const transporter = createTransporter();
+    await transporter.sendMail({
+      from: `"E-Team RH" <${process.env.EMAIL_USER}>`,
+      to: email,
+      subject: 'Candidature reçue - E-Team',
+      html: `<p>Bonjour ${name},</p><p>Nous avons bien reçu votre candidature.</p>`
+    });
+    console.log(`📧 MAIL : Confirmation de réception envoyée à ${email}`); // ✅ LOG
+    return true;
+  } catch (e) { 
+    console.error("❌ ERREUR NODEMAILER (Confirmation):", e.message); // ✅ LOG ERREUR
+    return false; 
+  }
+};
+
+const sendCandidacyInvitation = async (email, details) => {
+  try {
+    const transporter = createTransporter();
+    
+    const htmlContent = `
+      <div style="font-family: 'Inter', Arial, sans-serif; max-width: 600px; margin: auto; border: 1px solid #e1e1e1; border-radius: 12px; overflow: hidden; color: #333;">
+        <div style="background-color: #0A0A0A; padding: 30px; text-align: center;">
+          <h1 style="color: #CCFF00; margin: 0; font-size: 24px; letter-spacing: 1px;">E-TEAM RH</h1>
+        </div>
+        
+        <div style="padding: 30px; line-height: 1.6;">
+          <h2 style="color: #000; margin-top: 0;">Bonjour ${details.name},</h2>
+          
+          <p>Nous avons le plaisir de vous informer que votre profil a retenu toute notre attention après une première analyse de votre candidature.</p>
+          
+          <p>Dans le cadre de notre processus de sélection innovant, nous souhaiterions vous inviter à une <b>Session d'Échange Collective</b>. Ce moment nous permettra de faire connaissance et de vous présenter plus en détail la culture de <b>E-Team</b> ainsi que les enjeux du poste.</p>
+
+          <div style="background-color: #F8F9FA; border-left: 4px solid #CCFF00; padding: 20px; margin: 25px 0; border-radius: 8px;">
+            <p style="margin: 0; font-weight: bold; color: #000; text-transform: uppercase; font-size: 12px;">📅 Date de la session :</p>
+            <p style="margin: 5px 0 15px 0; font-size: 16px;">${details.interview_date}</p>
+
+            <p style="margin: 0; font-weight: bold; color: #000; text-transform: uppercase; font-size: 12px;">🔗 Lien de la visioconférence :</p>
+            <p style="margin: 10px 0 0 0;">
+              <a href="${details.meeting_link}" 
+                 style="background-color: #000; color: #CCFF00; padding: 10px 20px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">
+                Rejoindre la réunion (Jitsi)
+              </a>
+            </p>
+          </div>
+
+          <p>Nous vous recommandons de vous connecter quelques minutes à l'avance et de vous assurer du bon fonctionnement de votre micro et caméra.</p>
+          
+          <p>Dans l'attente de cet échange,</p>
+          
+          <p style="margin-bottom: 0;">Cordialement,</p>
+          <p style="margin-top: 5px; font-weight: bold; color: #A855F7;">L'équipe Recrutement Hera IA</p>
+        </div>
+        
+        <div style="background-color: #F4F4F4; padding: 15px; text-align: center; font-size: 11px; color: #999;">
+          Ceci est un message automatique envoyé par le service RH de E-Team.
+        </div>
+      </div>
+    `;
+
+    await transporter.sendMail({
+      from: `"Hera (E-Team RH)" <${process.env.EMAIL_USER}>`,
+      to: email,
+      subject: '📅 Invitation : Session de rencontre collective - E-Team',
+      html: htmlContent
+    });
+
+    console.log(`📧 MAIL : Invitation envoyée avec succès à ${email}`);
+    return true;
+  } catch (e) {
+    console.error("❌ ERREUR NODEMAILER (Invitation):", e.message);
+    return false;
+  }
+};
+
 module.exports = {
   sendVerificationEmail,
   sendPasswordResetEmail,
   sendWelcomeEmail,
   sendLeaveNotification,
   sendStaffingAlert,
+  sendCandidacyConfirmation,
+  sendCandidacyInvitation
 };

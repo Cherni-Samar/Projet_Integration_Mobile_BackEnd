@@ -45,7 +45,7 @@ app.use('/api/payment', paymentRoutes);
 // 4. Gestion des erreurs (404 & Global)
 app.use((req, res) => res.status(404).json({ success: false, message: "Route non trouvée" }));
 app.use(errorHandler);
-
+app.use(cors()); 
 // 5. Démarrage du serveur
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
