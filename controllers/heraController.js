@@ -42,33 +42,111 @@ function computeContractEnd(contractType, startDate) {
   d.setMonth(d.getMonth() + months);
   return d;
 }
+// Cette route sera appelée par Vapi automatiquement
+exports.vapiWebhook = async (req, res) => {
+  try {
+    const payload = req.body;
+    
+    // 1. Récupérer le message texte de l'admin depuis Vapi
+    const userMessage = payload.message?.toolCalls?.[0]?.function?.arguments?.message 
+                     || payload.message?.transcript 
+                     || "";
 
+    if (!userMessage) {
+      return res.json({ message: "Je vous écoute, comment puis-je aider l'équipe RH ?" });
+    }
+
+    // 2. Utiliser ton agent LangChain pour analyser le message (comme on a fait avant)
+    const analysis = await heraAgent.analyze(userMessage);
+
+    let finalReply = analysis.reply;
+
+    // 3. Si l'IA détecte une demande de congé via la voix
+    if (analysis.intent === "LEAVE_REQUEST") {
+      const employee = await Employee.findOne({ name: new RegExp(analysis.data.employee_name, 'i') });
+      
+      if (employee) {
+        const result = await executeLeaveDecision({
+          employee_id: employee._id,
+          type: analysis.data.type || 'annual',
+          start_date: analysis.data.start_date,
+          end_date: analysis.data.end_date,
+          reason: "Accordé par l'Admin via Voice"
+        });
+        finalReply = `C'est fait. J'ai traité la demande pour ${employee.name}. ${result.message}`;
+      } else {
+        finalReply = `Je n'ai pas trouvé l'employé ${analysis.data.employee_name} dans la base de données.`;
+      }
+    } 
+    
+    // 4. Si l'admin demande de vérifier le staffing ("Hera, vérifie si on manque de monde")
+    else if (userMessage.toLowerCase().includes("staffing") || userMessage.toLowerCase().includes("recrutement")) {
+      await exports.checkStaffingNeeds(req, res); // Appelle ta fonction qui mail Echo
+      finalReply = "J'ai analysé les départements. Des alertes de recrutement ont été envoyées à l'agent Echo pour les postes manquants.";
+    }
+
+    // 5. Répondre à Vapi (format spécifique pour que Hera parle)
+    return res.json({
+      results: [
+        {
+          toolCallId: payload.message?.toolCalls?.[0]?.id,
+          result: finalReply
+        }
+      ]
+    });
+
+  } catch (err) {
+    console.error("Vapi Error:", err);
+    res.json({ result: "Désolée, j'ai rencontré une erreur technique." });
+  }
+};
 // ── FONCTION : CHECK STAFFING ──
 exports.checkStaffingNeeds = async (req, res) => {
   try {
     const report = [];
-    const departments = Object.keys(DEPARTMENT_LIMITS); // Récupère Tech, Design, etc.
+    const departments = Object.keys(DEPARTMENT_LIMITS);
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
 
     for (const dept of departments) {
       const count = await Employee.countDocuments({ department: dept, status: 'active' });
       const limit = DEPARTMENT_LIMITS[dept].max_employees;
 
+      // 1. Détection du manque
       if (count < limit * 0.8) {
-        const gap = limit - count;
-        const newOffer = await JobOffer.create({
-          title: `Expert ${dept}`,
-          department: dept,
-          description: `Besoin de ${gap} talents.`
+        
+        // 2. 🛡️ ANTI-SPAM : Vérifier si Hera a déjà alerté Echo pour ce département AUJOURD'HUI
+        const alreadyNotified = await HeraAction.findOne({
+          action_type: 'absence_alert',
+          'details.department': dept,
+          created_at: { $gte: startOfToday }
         });
 
+        if (alreadyNotified) {
+          report.push({ dept, status: 'Déjà notifié aujourd\'hui', count });
+          continue; // On passe au département suivant sans envoyer de mail
+        }
+
+        // 3. Si pas encore notifié, on envoie le mail
         await mailService.sendWelcomeEmail(
           "echo-agent@e-team.com", 
           `Hera : Alerte Recrutement ${dept}`, 
-          `Besoin urgent en ${dept}. Offre créée : ${newOffer._id}`
+          `Besoin en ${dept}. Merci de poster une annonce.`
         );
-        report.push({ dept,offer_id: newOffer._id, count, limit, action: 'Offre créée & Mail Echo envoyé' });
+
+        // 4. On enregistre l'action pour s'en souvenir
+        await HeraAction.create({
+          action_type: 'absence_alert',
+          details: { department: dept, count: count, limit: limit },
+          triggered_by: 'hera_auto'
+        });
+
+        report.push({ dept, status: 'Echo notifié (Nouveau)', count });
+      } else {
+        report.push({ dept, status: 'Staffing OK', count });
       }
     }
+    
     res.json({ success: true, report });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };
@@ -325,12 +403,92 @@ exports.offboarding = async (req, res) => {
 };
 
 // Placeholders pour les routes admin pour éviter les crashs
-exports.getAdminStats = (req, res) => res.json({ success: true, stats: {} });
+exports.getAdminStats = async (req, res) => {
+  try {
+    // 1. Compter le total des employés actifs ou en onboarding
+    const totalEmployees = await Employee.countDocuments({
+      status: { $in: ['active', 'onboarding'] },
+    });
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    // 2. Compter les employés en congé AUJOURD'HUI
+    const onLeaveToday = await LeaveRequest.countDocuments({
+      status: 'approved',
+      start_date: { $lte: tomorrow },
+      end_date: { $gte: today }
+    });
+
+    // 3. Calculer le cumul des jours de congé du mois en cours
+    const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
+    const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
+
+    const monthlyLeaves = await LeaveRequest.aggregate([
+      {
+        $match: {
+          status: 'approved',
+          start_date: { $gte: startOfMonth, $lte: endOfMonth }
+        }
+      },
+      {
+        $group: {
+          _id: null,
+          totalDays: { $sum: '$days' }
+        }
+      }
+    ]);
+
+    // On renvoie les vrais chiffres au format attendu par Flutter
+    return res.json({
+      success: true,
+      stats: {
+        total_employees: totalEmployees,
+        on_leave_today: onLeaveToday,
+        monthly_leave_days: monthlyLeaves[0]?.totalDays || 0
+      }
+    });
+
+  } catch (error) {
+    console.error('❌ Erreur getAdminStats:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
 exports.getAllEmployees = async (req, res) => {
   const employees = await Employee.find();
   res.json({ success: true, employees });
 };
-exports.getRecentActions = (req, res) => res.json({ success: true, recent_actions: [] });
+exports.getRecentActions = async (req, res) => {
+  try {
+    const limit = parseInt(req.query.limit) || 5;
+
+    // Récupérer les dernières actions de Hera (ou les dernières demandes de congés)
+    const recentActions = await HeraAction.find()
+      .sort({ created_at: -1 })
+      .limit(limit)
+      .populate('employee_id', 'name role') // Pour avoir le nom de l'employé
+      .lean();
+
+    // Formater pour Flutter
+    const formattedActions = recentActions.map(action => ({
+      _id: action._id,
+      employee_name: action.employee_id?.name || 'Système',
+      action_type: action.action_type,
+      created_at: action.created_at,
+      badge: action.triggered_by === 'hera_auto' ? 'IA' : 'ADMIN'
+    }));
+
+    return res.json({
+      success: true,
+      recent_actions: formattedActions
+    });
+
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
 exports.getAllActions = (req, res) => res.json({ success: true, actions: [] });
 exports.deleteAction = (req, res) => res.json({ success: true, message: "Supprimé" });
 exports.sendEmailToEcho = (req, res) => res.json({ success: true, message: "Envoyé" });

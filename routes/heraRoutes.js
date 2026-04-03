@@ -40,5 +40,5 @@ router.get ('/admin/stats',              hera.getAdminStats);
 router.get ('/admin/employees',          hera.getAllEmployees);
 router.get ('/admin/recent-actions',     hera.getRecentActions);
 router.post('/chat', hera.chat);
-
+router.post('/vapi-webhook', hera.vapiWebhook);
 module.exports = router;

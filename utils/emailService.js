@@ -240,158 +240,25 @@ const sendPasswordResetEmail = async (email, code) => {
   }
 };
 
-// Envoyer un email de bienvenue après vérification
+// 1. Uniquement pour la création de compte
 const sendWelcomeEmail = async (email, name) => {
   try {
     const transporter = createTransporter();
-
     const mailOptions = {
       from: `"E-Team" <${process.env.EMAIL_USER}>`,
       to: email,
       subject: '🎉 Bienvenue sur E-Team !',
       html: `
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <style>
-            body {
-              font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-              background-color: #f5f5f5;
-              margin: 0;
-              padding: 0;
-            }
-            .container {
-              max-width: 600px;
-              margin: 40px auto;
-              background-color: white;
-              border-radius: 16px;
-              padding: 40px;
-              box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
-            }
-            .header {
-              text-align: center;
-              margin-bottom: 30px;
-            }
-            .logo {
-              font-size: 36px;
-              font-weight: bold;
-              color: #CDFF00;
-              text-shadow: 1px 1px 2px rgba(0, 0, 0, 0.1);
-            }
-            .hero {
-              background: linear-gradient(135deg, #CDFF00 0%, #A855F7 100%);
-              padding: 30px;
-              border-radius: 12px;
-              text-align: center;
-              margin: 30px 0;
-            }
-            .hero h1 {
-              font-size: 28px;
-              color: #000;
-              margin: 0;
-            }
-            .content {
-              color: #333;
-              line-height: 1.6;
-            }
-            .features {
-              background-color: #f9f9f9;
-              padding: 20px;
-              border-radius: 8px;
-              margin: 20px 0;
-            }
-            .features ul {
-              list-style: none;
-              padding: 0;
-            }
-            .features li {
-              padding: 10px 0;
-              padding-left: 30px;
-              position: relative;
-            }
-            .features li:before {
-              content: "✓";
-              position: absolute;
-              left: 0;
-              color: #CDFF00;
-              font-weight: bold;
-              font-size: 20px;
-            }
-            .cta {
-              text-align: center;
-              margin: 30px 0;
-            }
-            .button {
-              display: inline-block;
-              background-color: #000;
-              color: #CDFF00;
-              padding: 15px 40px;
-              border-radius: 8px;
-              text-decoration: none;
-              font-weight: bold;
-            }
-            .footer {
-              text-align: center;
-              margin-top: 30px;
-              color: #666;
-              font-size: 14px;
-              border-top: 1px solid #eee;
-              padding-top: 20px;
-            }
-            .highlight {
-              color: #CDFF00;
-              font-weight: bold;
-            }
-          </style>
-        </head>
-        <body>
-          <div class="container">
-            <div class="header">
-              <div class="logo">🚀 E-Team</div>
-            </div>
-            <div class="hero">
-              <h1>Bienvenue ${name || ''} ! 🎉</h1>
-            </div>
-            <div class="content">
-              <p>Votre compte <strong>E-Team</strong> est maintenant actif !</p>
-              <p>Vous avez accès à notre marketplace d'agents IA pour transformer votre entreprise :</p>
-              
-              <div class="features">
-                <ul>
-                  <li>Agents spécialisés par département</li>
-                  <li>Automatisation intelligente</li>
-                  <li>Collaboration en temps réel</li>
-                  <li>Analyses et rapports avancés</li>
-                </ul>
-              </div>
-
-              <div class="cta">
-                <a href="#" class="button">Explorer la Marketplace</a>
-              </div>
-
-              <p style="margin-top: 30px;">
-                Besoin d'aide ? Notre équipe est là pour vous accompagner.
-              </p>
-            </div>
-            <div class="footer">
-              <p>© 2026 <span class="highlight">E-Team</span> - Department as a Service</p>
-              <p style="font-size: 12px; color: #999; margin-top: 10px;">
-                L'avenir de votre entreprise commence maintenant 💼
-              </p>
-            </div>
-          </div>
-        </body>
-        </html>
-      `,
+        <div style="font-family: sans-serif; max-width: 600px; margin: auto;">
+          <h1 style="color: #CDFF00;">Bienvenue ${name} ! 🚀</h1>
+          <p>Votre compte est activé. Vous pouvez maintenant gérer vos agents IA.</p>
+        </div>
+      `
     };
-
     const info = await transporter.sendMail(mailOptions);
-    console.log('✅ Email de bienvenue envoyé:', info.messageId);
+    console.log('✅ Email de BIENVENUE envoyé:', info.messageId);
     return true;
-  } catch (error) {
-    console.error('❌ Erreur envoi email:', error);
-    return false;
-  }
+  } catch (error) { console.error('❌ Erreur welcome email:', error); return false; }
 };
 const sendLeaveNotification = async (email, details) => {
   try {
@@ -420,9 +287,36 @@ const sendLeaveNotification = async (email, details) => {
     return false;
   }
 };
+// 2. ✅ NOUVELLE FONCTION : Alerte de recrutement entre agents
+const sendStaffingAlert = async (targetEmail, details) => {
+  try {
+    const transporter = createTransporter();
+    const mailOptions = {
+      from: `"Hera (RH Service)" <${process.env.EMAIL_USER}>`,
+      to: targetEmail,
+      subject: `📢 ALERTE : Besoin de recrutement - ${details.department}`,
+      html: `
+        <div style="font-family: 'Inter', sans-serif; border: 1px solid #eee; padding: 20px; border-radius: 10px;">
+          <h2 style="color: #A855F7;">Note de Service RH</h2>
+          <p>L'agent <b>Hera</b> a détecté un manque d'effectif dans le département : <b>${details.department}</b>.</p>
+          <p style="background: #f9f9f9; padding: 15px; border-left: 4px solid #CDFF00;">
+             "${details.message}"
+          </p>
+          <p><i>Capacité actuelle : ${details.count}/${details.max}</i></p>
+          <hr>
+          <p style="font-size: 11px; color: #999;">Communication Inter-Agents E-Team</p>
+        </div>
+      `
+    };
+    const info = await transporter.sendMail(mailOptions);
+    console.log(`📡 ALERTE STAFFING ENVOYÉE (Dept: ${details.department})`);
+    return true;
+  } catch (error) { console.error('❌ Erreur alerte staffing:', error); return false; }
+};
 module.exports = {
   sendVerificationEmail,
   sendPasswordResetEmail,
   sendWelcomeEmail,
   sendLeaveNotification,
+  sendStaffingAlert,
 };

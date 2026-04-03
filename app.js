@@ -11,6 +11,10 @@ const agentRoutes = require('./routes/agentRoutes');
 const messageRoutes = require('./routes/messageRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
 const errorHandler = require('./middleware/errorHandler');
+const staffingWatcher = require('./services/staffingWatcher');
+
+// Démarrer la surveillance autonome
+staffingWatcher.watchStaffing();
 
 const app = express();
 
