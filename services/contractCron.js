@@ -29,14 +29,15 @@ async function checkExpiringContracts() {
   for (const emp of expiring30) {
     console.log(`📅 Contrat expire dans 30 jours : ${emp.name}`);
     try {
-      await n8n.offboarding({
-        employee_name: emp.name,
-        employee_email: emp.email,
-        manager_email: emp.manager_email,
-        reason: 'contract_expiring_soon',
-        last_day: emp.contract.end,
-        alert_type: 'J-30'
-      });
+    // Au lieu de await n8n.offboarding(...)
+    await mailService.sendLeaveNotification(emp.email, {
+   employee_name: emp.name,
+   status: 'refused', // Ou un nouveau template 'alert'
+   reason_decision: "Votre contrat arrive à échéance prochainement.",
+   start_date: "Attention",
+   end_date: emp.contract.end,
+   days: 0
+   });
     } catch (e) {
       console.error('⚠️ Erreur mail J-30:', e.message);
     }

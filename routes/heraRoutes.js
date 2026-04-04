@@ -35,10 +35,11 @@ router.post('/admin/check-staffing', hera.checkStaffingNeeds); // Hera analyse l
 // Assure-toi que cette ligne est présente
 router.post('/candidate/apply', hera.processCandidacy);
 // Documents
-router.post('/generate-doc', hera.generateHeraDoc); // Génère Contrat ou Attestation
+router.post('/generate-doc', hera.generateDocument); // Génère Contrat ou Attestation
 router.get ('/admin/stats',              hera.getAdminStats);
 router.get ('/admin/employees',          hera.getAllEmployees);
 router.get ('/admin/recent-actions',     hera.getRecentActions);
 router.post('/chat', hera.chat);
 router.post('/vapi-webhook', hera.vapiWebhook);
+router.post('/admin/init-docs', hera.initAllMissingDocs);
 module.exports = router;

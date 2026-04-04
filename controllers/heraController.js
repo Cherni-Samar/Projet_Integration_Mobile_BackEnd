@@ -106,37 +106,78 @@ exports.checkStaffingNeeds = async (req, res) => {
   try {
     const report = [];
     const departments = Object.keys(DEPARTMENT_LIMITS);
-    const startOfToday = new Date(); startOfToday.setHours(0, 0, 0, 0);
+    
+    // On définit la date limite (7 jours en arrière)
+    const oneWeekAgo = new Date();
+    oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
 
     for (const dept of departments) {
       const count = await Employee.countDocuments({ department: dept, status: 'active' });
       const limit = DEPARTMENT_LIMITS[dept].max_employees;
 
       if (count < limit * 0.8) {
-        const alreadyNotified = await HeraAction.findOne({
-          action_type: 'absence_alert', 'details.department': dept, created_at: { $gte: startOfToday }
-        });
+        // 1. Chercher si une alerte a été envoyée durant les 7 derniers jours
+        const lastAlert = await HeraAction.findOne({
+          action_type: 'absence_alert',
+          'details.department': dept,
+          created_at: { $gte: oneWeekAgo }
+        }).sort({ created_at: -1 });
 
-        if (!alreadyNotified) {
-          // ✅ Utilise l'alerte STAFFING (Pas de bienvenue)
+        let shouldNotify = false;
+
+        if (!lastAlert) {
+          // Cas A : Aucune alerte envoyée depuis 7 jours
+          shouldNotify = true;
+        } else {
+          // Cas B : Une alerte a été envoyée, on vérifie si Echo a répondu
+          // On cherche un message d'Echo reçu APRÈS la date de l'alerte
+          const echoResponse = await InboxEmail.findOne({
+            sender: "echo@e-team.com",
+            to: "hera@e-team.com",
+            content: new RegExp(dept, 'i'), // Echo mentionne le département dans sa réponse
+            receivedAt: { $gt: lastAlert.created_at }
+          });
+
+          if (!echoResponse) {
+            // Echo n'a pas encore répondu à l'alerte de la semaine
+            console.log(`⚠️ Echo n'a pas encore répondu pour ${dept}. Relance autorisée après 7 jours.`);
+            // Si l'alerte date de plus de 7 jours (géré par le findOne $gte), on relancera
+            // Ici, si lastAlert existe, on ne fait rien car elle a moins de 7 jours
+            shouldNotify = false; 
+          } else {
+            console.log(`✅ Echo a déjà confirmé le traitement pour ${dept}.`);
+            shouldNotify = false;
+          }
+        }
+
+        if (shouldNotify) {
+          console.log(`📢 Envoi d'une alerte hebdomadaire à Echo pour le département ${dept}`);
+          
           await mailService.sendStaffingAlert("echo-agent@e-team.com", {
-            department: dept, count, max: limit, message: `Manque d'effectif en ${dept}.`
+            department: dept,
+            count,
+            max: limit,
+            message: `Hera ici. Rappel hebdomadaire : le département ${dept} a besoin de renforts.`
           });
 
           await HeraAction.create({
-            action_type: 'absence_alert', details: { department: dept, count, limit }, triggered_by: 'hera_auto'
+            action_type: 'absence_alert',
+            details: { department: dept, count, limit, note: "Alerte Hebdomadaire" },
+            triggered_by: 'hera_auto'
           });
-          report.push({ dept, status: 'Echo notifié' });
+
+          report.push({ dept, status: 'Alerte envoyée' });
+        } else {
+          report.push({ dept, status: 'Sous surveillance (pas d\'envoi)' });
         }
       }
     }
     res.json({ success: true, report });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 };
 
-
-// ── FONCTION : CANDIDATURE (ATS) ──
-// ── FONCTION : CANDIDATURE (ATS) ──
 // --- Garde ta fonction getNextSessionDate() que nous avons écrite avant ---
 
 exports.processCandidacy = async (req, res) => {
@@ -183,31 +224,107 @@ exports.processCandidacy = async (req, res) => {
   }
 };
 // ── 2. GÉNÉRATION DE DOCUMENTS (CONTRAT / ATTESTATION) ────────────────────
-exports.generateHeraDoc = async (req, res) => {
+exports.generateDocument = async (req, res) => {
   try {
-    const { employee_id, doc_type } = req.body; // doc_type: 'contract' ou 'attestation'
-    const employee = await Employee.findById(employee_id);
+    const { employee_id, doc_type } = req.body;
     
+    // 1. On récupère l'employé avec toutes ses infos de contrat
+    const employee = await Employee.findById(employee_id);
     if (!employee) return res.status(404).json({ message: "Employé non trouvé" });
 
-    const today = new Date().toLocaleDateString();
+    // 2. Préparation et formatage des dates (très important)
+    const options = { year: 'numeric', month: 'long', day: 'numeric' };
+    
+    // Date d'aujourd'hui (date de signature)
+    const today = new Date().toLocaleDateString('fr-FR', options);
+    
+    // Date de début (récupérée de l'onboarding)
+    const startDate = employee.contract?.start 
+      ? new Date(employee.contract.start).toLocaleDateString('fr-FR', options) 
+      : "Non définie";
+
+    // Date de fin (si CDD/Stage) ou mention CDI
+    const endDate = employee.contract?.end 
+      ? new Date(employee.contract.end).toLocaleDateString('fr-FR', options) 
+      : "Indéterminée (Contrat CDI)";
+
     let content = "";
 
-    if (doc_type === 'attestation') {
-      content = `ATTESTATION D'EMPLOI\n\nJe soussigné, Hera (IA RH), certifie que ${employee.name} est employé au sein de E-Team au poste de ${employee.role}.\nFait le ${today}.`;
-    } else {
-      content = `CONTRAT DE TRAVAIL - E-TEAM\n\nEntre E-Team et ${employee.name}.\nPoste : ${employee.role}\nDépartement : ${employee.department}\nSalaire : ${employee.salary}€`;
+    if (doc_type === 'contract') {
+      content = `
+==========================================
+           CONTRAT DE TRAVAIL
+==========================================
+
+RÉFÉRENCE : ET-2026-${employee_id.toString().substring(0, 5).toUpperCase()}
+FAIT LE : ${today}
+
+ENTRE :
+La société E-TEAM, représentée par l'IA HERA.
+
+ET LE COLLABORATEUR :
+Nom : ${employee.name}
+Poste : ${employee.role}
+Département : ${employee.department}
+
+------------------------------------------
+DÉTAILS DU CONTRAT :
+------------------------------------------
+TYPE DE CONTRAT  : ${employee.contract?.type || 'CDI'}
+DATE DE DÉBUT    : ${startDate}  <-- ✅
+DATE DE FIN      : ${endDate}    <-- ✅
+RÉMUNÉRATION     : ${employee.salary || 3000} € / mois
+
+CLAUSES :
+Ce document certifie que le collaborateur a passé
+avec succès les étapes de recrutement IA. 
+Le présent contrat est régi par les lois en vigueur.
+
+------------------------------------------
+SIGNATURE ÉLECTRONIQUE HERA IA : [CERTIFIÉ]
+==========================================
+      `;
     }
 
-    // Log de l'action
+    // 3. On enregistre le document avec les VRAIES dates dans l'historique
     await HeraAction.create({
-      employee_id,
-      action_type: doc_type === 'contract' ? 'contract_renewal' : 'performance_alert',
-      details: { doc_content: content },
+      employee_id: employee._id,
+      action_type: 'contract_renewal',
+      details: { 
+        doc_type: 'contract', 
+        content: content // On stocke le texte complet avec les dates
+      },
       triggered_by: 'hera_auto'
     });
 
-    res.json({ success: true, type: doc_type, content });
+    res.json({ success: true, content });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+exports.initAllMissingDocs = async (req, res) => {
+  try {
+    const employees = await Employee.find();
+    let count = 0;
+
+    for (const emp of employees) {
+      // On vérifie si l'employé a déjà un contrat
+      const hasContract = await HeraAction.findOne({ employee_id: emp._id, action_type: 'contract_renewal' });
+      
+      if (!hasContract) {
+        // On lui crée son contrat rétroactivement
+        const content = `CONTRAT DE TRAVAIL (Archive)\n\nEmployé : ${emp.name}\nPoste : ${emp.role}\nFait automatiquement par Hera.`;
+        
+        await HeraAction.create({
+          employee_id: emp._id,
+          action_type: 'contract_renewal',
+          details: { doc_type: 'contract', content: content },
+          triggered_by: 'hera_auto'
+        });
+        count++;
+      }
+    }
+    res.json({ success: true, message: `${count} contrats générés pour les anciens employés.` });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -389,13 +506,54 @@ exports.urgentLeave = async (req, res) => {
 // ── FONCTION : ONBOARDING (Vraie Bienvenue) ──
 exports.onboarding = async (req, res) => {
   try {
+    // 1. Création de l'employé en base
     const employee = await Employee.create(req.body);
-    
-    // ✅ ICI et UNIQUEMENT ICI : Mail de Bienvenue
+
+    // 2. 📝 GÉNÉRATION DU CONTRAT PAR HERA
+    const dateStr = new Date().toLocaleDateString('fr-FR');
+    const contractText = `
+      CONTRAT DE TRAVAIL - E-TEAM
+      ------------------------------------
+      RÉFÉRENCE : ET-${Math.floor(Math.random() * 10000)}
+      DATE D'ÉMISSION : ${dateStr}
+      
+      ENTRE : La société E-Team, représentée par l'agent IA Hera.
+      ET : M./Mme ${employee.name}.
+      
+      Il est convenu ce qui suit :
+      POSTE : ${employee.role}
+      DÉPARTEMENT : ${employee.department}
+      TYPE DE CONTRAT : ${employee.contract?.type || 'CDI'}
+      
+      Hera IA certifie que ce document est généré automatiquement
+      et fait foi de l'intégration du collaborateur dans le système.
+    `;
+
+    // 3. ✅ ENREGISTREMENT DANS HERA ACTION (Pour que Flutter le voie)
+    // On utilise 'contract_renewal' car c'est ce que ton Front cherche
+    await HeraAction.create({
+      employee_id: employee._id,
+      action_type: 'contract_renewal', 
+      details: { 
+        doc_type: 'contract',
+        content: contractText // C'est ce texte qui sera affiché dans la pop-up
+      },
+      triggered_by: 'hera_auto'
+    });
+
+    // 4. Envoi du mail de bienvenue
     await mailService.sendWelcomeEmail(employee.email, employee.name);
-    
-    res.status(201).json({ success: true, message: "Employé créé et mail de bienvenue envoyé" });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+
+    res.status(201).json({ 
+      success: true, 
+      message: "Onboarding réussi et contrat généré",
+      employee_id: employee._id 
+    });
+
+  } catch (err) {
+    console.error("Erreur Onboarding:", err);
+    res.status(500).json({ error: err.message });
+  }
 };
 
 exports.getLeaves = async (req, res) => {
