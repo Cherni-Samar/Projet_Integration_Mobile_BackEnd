@@ -6,6 +6,7 @@ const mailService = require('../utils/emailService'); // Chemin corrigé selon t
 const heraAgent = require('../services/hera.agent'); // Ton service LangChain
 const JobOffer = require('../models/JobOffer');
 const Candidate = require('../models/Candidate');
+const dexo = require('../controllers/dexoController'); // ✅ AJOUTE CECI
 const mongoose = require('mongoose'); // ✅ AJOUTE CETTE LIGNE TOUT EN HAUT
 // 💡 DÉFINITION DES LIMITES (Indispensable pour check-staffing)
 const DEPARTMENT_LIMITS = {
@@ -106,69 +107,79 @@ exports.checkStaffingNeeds = async (req, res) => {
   try {
     const report = [];
     const departments = Object.keys(DEPARTMENT_LIMITS);
-    
-    // On définit la date limite (7 jours en arrière)
-    const oneWeekAgo = new Date();
-    oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+    const InboxEmail = require('../models/InboxEmail'); // On a besoin de vérifier les réponses d'Echo
 
     for (const dept of departments) {
       const count = await Employee.countDocuments({ department: dept, status: 'active' });
       const limit = DEPARTMENT_LIMITS[dept].max_employees;
 
+      // 1. Détecter si le département est en sous-effectif (< 80%)
       if (count < limit * 0.8) {
-        // 1. Chercher si une alerte a été envoyée durant les 7 derniers jours
+        
+        // 2. Chercher la TOUTE DERNIÈRE alerte envoyée pour ce département
         const lastAlert = await HeraAction.findOne({
           action_type: 'absence_alert',
-          'details.department': dept,
-          created_at: { $gte: oneWeekAgo }
+          'details.department': dept
         }).sort({ created_at: -1 });
 
         let shouldNotify = false;
+        let statusReason = "";
 
         if (!lastAlert) {
-          // Cas A : Aucune alerte envoyée depuis 7 jours
+          // CAS 1 : Jamais d'alerte envoyée -> On envoie la première
           shouldNotify = true;
+          statusReason = "Première alerte";
         } else {
-          // Cas B : Une alerte a été envoyée, on vérifie si Echo a répondu
-          // On cherche un message d'Echo reçu APRÈS la date de l'alerte
+          // CAS 2 : Une alerte existe, on vérifie si Echo a répondu "OK" (ou autre)
+          // On cherche un mail d'Echo vers Hera arrivé APRÈS la dernière alerte
           const echoResponse = await InboxEmail.findOne({
             sender: "echo@e-team.com",
             to: "hera@e-team.com",
-            content: new RegExp(dept, 'i'), // Echo mentionne le département dans sa réponse
             receivedAt: { $gt: lastAlert.created_at }
           });
 
-          if (!echoResponse) {
-            // Echo n'a pas encore répondu à l'alerte de la semaine
-            console.log(`⚠️ Echo n'a pas encore répondu pour ${dept}. Relance autorisée après 7 jours.`);
-            // Si l'alerte date de plus de 7 jours (géré par le findOne $gte), on relancera
-            // Ici, si lastAlert existe, on ne fait rien car elle a moins de 7 jours
-            shouldNotify = false; 
-          } else {
-            console.log(`✅ Echo a déjà confirmé le traitement pour ${dept}.`);
+          if (echoResponse) {
+            // Echo a répondu ! On s'arrête là, le recrutement est en cours.
             shouldNotify = false;
+            statusReason = "Echo a déjà répondu (Recrutement en cours)";
+          } else {
+            // Echo n'a pas répondu. A-t-on dépassé les 7 jours ?
+            const sevenDaysAgo = new Date();
+            sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+            if (lastAlert.created_at < sevenDaysAgo) {
+              // Plus de 7 jours sans réponse -> Relance hebdomadaire
+              shouldNotify = true;
+              statusReason = "Relance hebdomadaire (Pas de réponse d'Echo)";
+            } else {
+              // Moins de 7 jours, on attend encore
+              shouldNotify = false;
+              statusReason = "En attente de réponse d'Echo (Relance dans moins de 7j)";
+            }
           }
         }
 
+        // 3. Exécution de l'envoi si nécessaire
         if (shouldNotify) {
-          console.log(`📢 Envoi d'une alerte hebdomadaire à Echo pour le département ${dept}`);
+          console.log(`📢 Hera envoie un mail à Echo pour le département ${dept} (${statusReason})`);
           
           await mailService.sendStaffingAlert("echo-agent@e-team.com", {
             department: dept,
-            count,
+            count: count,
             max: limit,
-            message: `Hera ici. Rappel hebdomadaire : le département ${dept} a besoin de renforts.`
+            message: `Alerte Staffing : Le département ${dept} a besoin de renforts.`
           });
 
+          // On enregistre l'action pour marquer la date de l'envoi
           await HeraAction.create({
             action_type: 'absence_alert',
-            details: { department: dept, count, limit, note: "Alerte Hebdomadaire" },
+            details: { department: dept, count, limit, note: statusReason },
             triggered_by: 'hera_auto'
           });
 
-          report.push({ dept, status: 'Alerte envoyée' });
+          report.push({ dept, status: 'Mail envoyé', reason: statusReason });
         } else {
-          report.push({ dept, status: 'Sous surveillance (pas d\'envoi)' });
+          report.push({ dept, status: 'Pas de mail', reason: statusReason });
         }
       }
     }
@@ -177,7 +188,6 @@ exports.checkStaffingNeeds = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
-
 // --- Garde ta fonction getNextSessionDate() que nous avons écrite avant ---
 
 exports.processCandidacy = async (req, res) => {
@@ -647,28 +657,25 @@ exports.getAllEmployees = async (req, res) => {
 };
 exports.getRecentActions = async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit) || 5;
+    const limit = parseInt(req.query.limit) || 8;
 
-    // Récupérer les dernières actions de Hera (ou les dernières demandes de congés)
     const recentActions = await HeraAction.find()
       .sort({ created_at: -1 })
       .limit(limit)
-      .populate('employee_id', 'name role') // Pour avoir le nom de l'employé
+      .populate('employee_id', 'name role')
       .lean();
 
-    // Formater pour Flutter
     const formattedActions = recentActions.map(action => ({
       _id: action._id,
       employee_name: action.employee_id?.name || 'Système',
       action_type: action.action_type,
+      // ✅ AJOUTE CETTE LIGNE POUR ENVOYER LES DÉTAILS À FLUTTER
+      details: action.details, 
       created_at: action.created_at,
       badge: action.triggered_by === 'hera_auto' ? 'IA' : 'ADMIN'
     }));
 
-    return res.json({
-      success: true,
-      recent_actions: formattedActions
-    });
+    return res.json({ success: true, recent_actions: formattedActions });
 
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });

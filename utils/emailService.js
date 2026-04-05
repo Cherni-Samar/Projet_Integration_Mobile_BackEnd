@@ -320,13 +320,48 @@ const sendCandidacyConfirmation = async (email, name) => {
     await transporter.sendMail({
       from: `"E-Team RH" <${process.env.EMAIL_USER}>`,
       to: email,
-      subject: 'Candidature reçue - E-Team',
-      html: `<p>Bonjour ${name},</p><p>Nous avons bien reçu votre candidature.</p>`
+      subject: '📩 Confirmation de réception : Votre candidature chez E-Team',
+      html: `
+        <div style="font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; max-width: 600px; margin: auto; border: 1px solid #eee; border-radius: 15px; padding: 30px; color: #1a1a1a;">
+          
+          <div style="text-align: center; margin-bottom: 25px;">
+            <span style="font-size: 22px; font-weight: bold; color: #000; letter-spacing: 1px;">E-TEAM <span style="color: #CCFF00;">•</span> RECRUTEMENT</span>
+          </div>
+          
+          <h2 style="font-size: 18px; color: #333;">Bonjour ${name},</h2>
+          
+          <p style="font-size: 15px; line-height: 1.6; color: #555;">
+            Nous vous confirmons avoir bien reçu votre candidature pour rejoindre nos équipes.
+          </p>
+          
+          <div style="background-color: #f9f9f9; border-left: 4px solid #ccc; padding: 20px; margin: 25px 0;">
+            <p style="margin: 0; font-size: 14px; color: #666; line-height: 1.5;">
+              <b>Statut actuel :</b> Analyse en cours par notre système de gestion des talents.<br>
+              Votre profil est actuellement étudié par <b>Hera IA</b> pour évaluer la correspondance avec nos besoins actuels.
+            </p>
+          </div>
+
+          <p style="font-size: 15px; line-height: 1.6; color: #555;">
+            Si votre profil est retenu pour la prochaine étape, vous recevrez une invitation automatique pour une session de découverte collective. Dans le cas contraire, nous conserverons votre profil dans notre vivier de talents.
+          </p>
+
+          <p style="font-size: 15px; margin-top: 30px; color: #000; font-weight: bold;">
+            Merci de votre intérêt pour E-Team.
+          </p>
+          
+          <hr style="border: 0; border-top: 1px solid #eee; margin: 30px 0;">
+          
+          <p style="text-align: center; color: #aaa; font-size: 11px;">
+            Ceci est un message automatique envoyé par le département RH de E-Team.<br>
+            © 2026 E-Team Intelligence.
+          </p>
+        </div>
+      `
     });
-    console.log(`📧 MAIL : Confirmation de réception envoyée à ${email}`); // ✅ LOG
+    console.log(`📧 MAIL : Confirmation de réception envoyée à ${email}`);
     return true;
   } catch (e) { 
-    console.error("❌ ERREUR NODEMAILER (Confirmation):", e.message); // ✅ LOG ERREUR
+    console.error("❌ ERREUR NODEMAILER (Confirmation):", e.message);
     return false; 
   }
 };

@@ -1,6 +1,7 @@
 const express = require('express');
 const router  = express.Router();
 const hera    = require('../controllers/heraController');
+const dexo = require('../controllers/dexoController'); // ✅ AJOUTE CETTE LIGNE
 
 router.post('/hello',                    hera.hello);
 router.post('/leave-request',            hera.requestLeave);
@@ -42,4 +43,6 @@ router.get ('/admin/recent-actions',     hera.getRecentActions);
 router.post('/chat', hera.chat);
 router.post('/vapi-webhook', hera.vapiWebhook);
 router.post('/admin/init-docs', hera.initAllMissingDocs);
+router.get('/admin/dexo-checkup', dexo.getDailyCheckUp); // ✅ MODIFIE L'APPEL ICI
+
 module.exports = router;
