@@ -1,0 +1,85 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Backend PIM — statut</title>
+  <style>
+    :root { font-family: system-ui, sans-serif; background: #0f1419; color: #e7e9ea; }
+    body { max-width: 640px; margin: 2rem auto; padding: 0 1rem; line-height: 1.5; }
+    h1 { font-size: 1.25rem; }
+    .ok { color: #00ba7c; }
+    .err { color: #f4212e; }
+    pre { background: #1a2332; padding: 1rem; border-radius: 8px; overflow: auto; font-size: 0.85rem; }
+    .box { border: 1px solid #38444d; border-radius: 8px; padding: 1rem; margin: 1rem 0; }
+    button { background: #1d9bf0; color: #fff; border: 0; padding: 0.5rem 1rem; border-radius: 999px; cursor: pointer; font-weight: 600; }
+    button:hover { filter: brightness(1.1); }
+    ul { padding-left: 1.2rem; }
+    a { color: #1d9bf0; }
+  </style>
+</head>
+<body>
+  <h1>Backend Projet_Integration_Mobile</h1>
+  <p>Si cette page s’affiche, le serveur répond. L’app mobile doit utiliser une <strong>URL réseau</strong>, pas <code>localhost</code> (sauf simulateur iOS sur le même Mac).</p>
+
+  <div class="box">
+    <p><strong>URL de base pour ton app</strong> (remplace par ton IP Wi‑Fi) :</p>
+    <pre id="baseUrl"></pre>
+    <button type="button" id="btn">Tester /api</button>
+    <p id="status"></p>
+    <pre id="out"></pre>
+  </div>
+
+  <div class="box">
+    <h2>Formulaire candidature</h2>
+    <p style="margin:1rem 0;">
+      <a id="openFormCta" href="/form" style="display:inline-block;padding:14px 22px;background:#00ba7c;color:#0f1419;border-radius:10px;text-decoration:none;font-weight:800;">
+        Ouvrir le formulaire (clic ici)
+      </a>
+    </p>
+    <p>Raccourcis : <a href="/form"><strong>/form</strong></a> · <a href="/candidature"><strong>/candidature</strong></a></p>
+    <p><strong>Lien cliquable</strong> (même adresse, à copier pour les réseaux) :</p>
+    <p style="word-break:break-all;"><a id="formFullUrlLink" href="/form"></a></p>
+    <p style="font-size:0.9rem;color:#8899a6;">Sur LinkedIn, <code>localhost</code> reste souvent du texte mort : utilise une URL <strong>https</strong> (ngrok, hébergeur) pour un vrai clic.</p>
+  </div>
+
+  <div class="box">
+    <h2>Mobile — rappels</h2>
+    <ul>
+      <li><strong>Android émulateur</strong> : <code>http://10.0.2.2:PORT</code> au lieu de localhost</li>
+      <li><strong>Téléphone physique</strong> : même Wi‑Fi que le PC, URL <code>http://IP_DU_PC:PORT</code> (ex. <code>192.168.1.20:3000</code>)</li>
+      <li>Vérifie le pare-feu Windows (autoriser Node sur le port utilisé)</li>
+    </ul>
+    <p>Endpoint utile : <a href="/api/client-config">GET /api/client-config</a> (JSON avec l’URL détectée)</p>
+  </div>
+
+  <script>
+    const origin = window.location.origin;
+    document.getElementById('baseUrl').textContent = origin;
+    const fullForm = origin + '/form';
+    const link = document.getElementById('formFullUrlLink');
+    if (link) {
+      link.href = fullForm;
+      link.textContent = fullForm;
+    }
+    const cta = document.getElementById('openFormCta');
+    if (cta) cta.href = fullForm;
+
+    document.getElementById('btn').onclick = async () => {
+      const status = document.getElementById('status');
+      const out = document.getElementById('out');
+      status.textContent = 'Chargement…';
+      out.textContent = '';
+      try {
+        const r = await fetch(origin + '/api');
+        const j = await r.json();
+        status.innerHTML = r.ok ? '<span class="ok">Connecté au backend ✓</span>' : '<span class="err">Erreur HTTP ' + r.status + '</span>';
+        out.textContent = JSON.stringify(j, null, 2);
+      } catch (e) {
+        status.innerHTML = '<span class="err">Impossible de joindre l’API (réseau / CORS / serveur arrêté)</span>';
+        out.textContent = String(e);
+      }
+    };
+  </script>
+</body>
+</html>
