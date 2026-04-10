@@ -1,7 +1,11 @@
 const express = require('express');
 const router  = express.Router();
+const multer = require('multer');
 const hera    = require('../controllers/heraController');
 const dexo = require('../controllers/dexoController'); // ✅ AJOUTE CETTE LIGNE
+const upload = multer({ dest: 'uploads/resumes/' }); // Les fichiers iront dans ce dossier
+const timo = require('../controllers/timoController');
+const vocalAuto = require('../services/automatedBriefing');
 
 router.post('/hello',                    hera.hello);
 router.post('/leave-request',            hera.requestLeave);
@@ -34,7 +38,7 @@ router.delete('/admin/action/:action_id',  hera.deleteAction);
 // Recrutement & Staffing
 router.post('/admin/check-staffing', hera.checkStaffingNeeds); // Hera analyse les besoins et mail Echo
 // Assure-toi que cette ligne est présente
-router.post('/candidate/apply', hera.processCandidacy);
+router.post('/candidate/apply', upload.single('resume_file'), hera.processCandidacy);
 // Documents
 router.post('/generate-doc', hera.generateDocument); // Génère Contrat ou Attestation
 router.get ('/admin/stats',              hera.getAdminStats);
@@ -44,5 +48,19 @@ router.post('/chat', hera.chat);
 router.post('/vapi-webhook', hera.vapiWebhook);
 router.post('/admin/init-docs', hera.initAllMissingDocs);
 router.get('/admin/dexo-checkup', dexo.getDailyCheckUp); // ✅ MODIFIE L'APPEL ICI
-
+// Étape 1 : Le candidat postule (Formulaire HTML)
+router.post('/resignation', hera.processResignation);
+// Étape 2 : L'admin valide (Application Flutter)
+router.post('/admin/hire/:id', hera.hireCandidate);
+router.post('/admin/timo-confirm', timo.confirmPlanning); // ✅ POUR ENREGISTRER LA DATE
+router.get('/admin/timo-tasks', timo.getTimoTasks);
+router.get('/admin/timo-inbox', timo.getTimoInbox); // ✅ Doit être identique au nom dans l'URL
+router.get('/admin/trigger-vocal', async (req, res) => {
+    try {
+        await vocalAuto.runAutomatedVocalBriefing();
+        res.json({ success: true, message: "🚀 Envoi du vocal WhatsApp déclenché !" });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
 module.exports = router;

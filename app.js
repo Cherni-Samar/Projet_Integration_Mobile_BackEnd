@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
+const employeeAuthRoutes = require('./routes/employeeAuth'); // ✅ 1. AJOUTE CET IMPORT
 
 // Import des Routes
 const authRoutes = require('./routes/authRoutes');
@@ -41,7 +42,9 @@ app.use('/api/emails', emailRoutes);
 app.use('/api/agents', agentRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/payment', paymentRoutes);
-
+app.use('/api/employees', employeeAuthRoutes); // ✅ 2. ENREGISTRE SOUS /api/employees
+// app.js
+require('./services/automatedBriefing');
 // 4. Gestion des erreurs (404 & Global)
 app.use((req, res) => res.status(404).json({ success: false, message: "Route non trouvée" }));
 app.use(errorHandler);

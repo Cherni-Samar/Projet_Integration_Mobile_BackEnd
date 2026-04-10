@@ -49,6 +49,39 @@ class HeraAgent {
       return { score: 40, reason: "Erreur lors de l'analyse" };
     }
   }
+  // --- ANALYSE DE LETTRE DE DÉMISSION ---
+  async analyzeResignation(resignationText, employeeName) {
+    const today = new Date().toISOString().split('T')[0];
+    const prompt = `Tu es Hera, l'IA RH d'E-Team. Aujourd'hui : ${today}.
+Analyse cette lettre de démission de ${employeeName} et réponds UNIQUEMENT en JSON valide :
+{
+  "tone": "positive" | "neutral" | "negative" | "conflictual",
+  "notice_period_days": <nombre de jours de préavis mentionnés ou null>,
+  "last_day": "<YYYY-MM-DD ou null>",
+  "reason": "<raison principale détectée : personal | professional_growth | conflict | relocation | health | other>",
+  "reason_summary": "<résumé court de la raison en français>",
+  "risk_level": "low" | "medium" | "high",
+  "risk_notes": "<explication du risque RH>",
+  "exit_interview_recommended": true | false,
+  "knowledge_transfer_urgency": "low" | "medium" | "high",
+  "reply": "<message de réponse RH professionnel et bienveillant à envoyer à l'employé>"
+}
+
+Lettre de démission :
+"""
+${resignationText}
+"""`;
+
+    try {
+      const response = await this.llm.invoke(prompt);
+      const match = response.content.match(/\{[\s\S]*\}/);
+      if (match) return JSON.parse(match[0]);
+      return { tone: 'neutral', risk_level: 'medium', reply: 'Démission reçue et prise en compte.' };
+    } catch (e) {
+      console.error('Erreur analyzeResignation:', e);
+      return { tone: 'neutral', risk_level: 'medium', reply: 'Démission reçue et prise en compte.' };
+    }
+  }
 }
 
 module.exports = new HeraAgent();

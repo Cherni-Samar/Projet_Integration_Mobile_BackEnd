@@ -40,3 +40,24 @@ exports.getDailyCheckUp = async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 };
+const generateBriefingLogic = async () => {
+    const actions = await HeraAction.find().sort({ created_at: -1 }).limit(10).populate('employee_id');
+    
+    if (!actions || actions.length === 0) {
+        return "🏢 Statut : Calme. Aucune activité RH majeure à signaler pour le moment.";
+    }
+
+    const logSummary = actions.map(a => {
+        let type = a.action_type;
+        if (type === 'absence_alert') type = "Alerte staffing";
+        if (type === 'contract_renewal') type = "Onboarding contrat";
+        if (type === 'leave_approved') type = "Congé validé";
+        return `- ${type} pour ${a.employee_id?.name || a.details?.department || 'système'}`;
+    }).join('\n');
+
+    const prompt = `Tu es Dexo, superviseur de E-Team. Rédige une synthèse très courte (2 phrases max) pour le CEO à partir de ces logs : ${logSummary}. Sois pro.`;
+    const aiResponse = await heraAgent.llm.invoke(prompt);
+    
+    return aiResponse.content;
+};
+exports.generateBriefingLogic = generateBriefingLogic;
