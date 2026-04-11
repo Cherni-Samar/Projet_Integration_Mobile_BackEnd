@@ -1,5 +1,6 @@
 const Expense = require('../models/Expense');
 const User = require('../models/User');
+const Reminder = require('../models/Reminder');
 const axios = require('axios');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
@@ -19,7 +20,6 @@ function getGeminiModel() {
   }
 
   if (!geminiModel) {
-    // Standard SDK initialization (let the SDK pick the API version)
     const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
     geminiModel = genAI.getGenerativeModel({ model: GEMINI_MODEL_NAME });
   }
@@ -35,19 +35,14 @@ function parseDataUrl(dataUrl) {
 
 function normalizeBase64String(value) {
   if (typeof value !== 'string') return '';
-  // Remove whitespace/newlines often present in base64 payloads
   return value.trim().replace(/\s+/g, '');
 }
 
 function inferMimeTypeFromBase64(base64) {
   const head = base64.slice(0, 24);
-  // JPEG: /9j/...
   if (head.startsWith('/9j/')) return 'image/jpeg';
-  // PNG: iVBORw0KGgo...
   if (head.startsWith('iVBORw0KGgo')) return 'image/png';
-  // GIF: R0lGOD...
   if (head.startsWith('R0lGOD')) return 'image/gif';
-  // WEBP: UklGR...
   if (head.startsWith('UklGR')) return 'image/webp';
   return 'image/png';
 }
@@ -179,126 +174,37 @@ async function analyzeReceiptWithGemini({ inlineData }) {
   return parsed.value;
 }
 
-exports.addExpense = async (req, res, next) => {
-  try {
-    const managerId = req.user?.id;
+// ============================================================================
+// EXPORTED FUNCTIONS
+// ============================================================================
 
-    if (!managerId) {
-      return res.status(401).json({
-        success: false,
-        message: 'Unauthorized',
-      });
-    }
-
-    const {
-      employeeId = null,
-      amount,
-      currency,
-      vendor,
-      category,
-      description,
-      receiptUrl,
-      status,
-      isSubscription,
-      date,
-    } = req.body ?? {};
-
-    if (amount === undefined || amount === null || amount === '') {
-      return res.status(400).json({
-        success: false,
-        message: 'amount requis',
-      });
-    }
-
-    const normalizedAmount = Number(amount);
-    if (!Number.isFinite(normalizedAmount)) {
-      return res.status(400).json({
-        success: false,
-        message: 'amount invalide',
-      });
-    }
-
-    // 1) Déduire l'énergie de manière atomique (refuse si insuffisant)
-    const updatedManager = await User.findOneAndUpdate(
-      { _id: managerId, energyBalance: { $gte: ENERGY_COST_ADD_EXPENSE } },
-      { $inc: { energyBalance: -ENERGY_COST_ADD_EXPENSE } },
-      { new: true }
-    ).lean();
-
-    if (!updatedManager) {
-      return res.status(403).json({
-        success: false,
-        message: "Énergie insuffisante pour ajouter une dépense",
-      });
-    }
-
-    // 2) Créer la dépense
-    try {
-      const expense = await Expense.create({
-        managerId,
-        employeeId,
-        amount: normalizedAmount,
-        ...(currency !== undefined ? { currency } : {}),
-        ...(vendor !== undefined ? { vendor } : {}),
-        ...(category !== undefined ? { category } : {}),
-        ...(description !== undefined ? { description } : {}),
-        ...(receiptUrl !== undefined ? { receiptUrl } : {}),
-        ...(status !== undefined ? { status } : {}),
-        ...(isSubscription !== undefined ? { isSubscription } : {}),
-        ...(date !== undefined ? { date } : {}),
-      });
-
-      return res.status(201).json({
-        success: true,
-        message: 'Dépense ajoutée',
-        data: {
-          expense,
-          energyBalance: updatedManager.energyBalance,
-        },
-      });
-    } catch (err) {
-      // Rollback best-effort: recréditer l'énergie si la création de dépense échoue
-      await User.updateOne(
-        { _id: managerId },
-        { $inc: { energyBalance: ENERGY_COST_ADD_EXPENSE } }
-      );
-      throw err;
-    }
-  } catch (error) {
-    next(error);
-  }
-};
-
-// POST /api/kash/analyze
+/**
+ * Analyze receipt via Gemini AI
+ * POST /api/kash/analyze
+ */
 exports.analyzeReceipt = async (req, res, next) => {
-  const managerId = req.user?.id;
-
   try {
-    if (!managerId) {
-      return res.status(401).json({
-        success: false,
-        message: 'Unauthorized',
-      });
+    const userId = req.user?.id;
+
+    if (!userId) {
+      return res.status(401).json({ success: false, message: 'Unauthorized' });
     }
 
     const { imageUrl, imageBase64 } = req.body ?? {};
     const inlineData = await coerceToGeminiInlineData({ imageUrl, imageBase64 });
 
     if (!inlineData) {
-      return res.status(400).json({
-        success: false,
-        message: 'imageUrl ou imageBase64 requis',
-      });
+      return res.status(400).json({ success: false, message: 'imageUrl ou imageBase64 requis' });
     }
 
-    // Débit énergie (atomique) avant analyse, rollback si erreur
-    const updatedManager = await User.findOneAndUpdate(
-      { _id: managerId, energyBalance: { $gte: ENERGY_COST_ANALYZE_RECEIPT } },
+    // Atomic energy debit
+    const updatedUser = await User.findOneAndUpdate(
+      { _id: userId, energyBalance: { $gte: ENERGY_COST_ANALYZE_RECEIPT } },
       { $inc: { energyBalance: -ENERGY_COST_ANALYZE_RECEIPT } },
       { new: true }
     ).lean();
 
-    if (!updatedManager) {
+    if (!updatedUser) {
       return res.status(403).json({
         success: false,
         message: "Énergie insuffisante pour l'analyse IA",
@@ -325,7 +231,7 @@ exports.analyzeReceipt = async (req, res, next) => {
 
       return res.status(200).json({
         success: true,
-        message: "Analyse terminée. Validez avant enregistrement.",
+        message: 'Analyse terminée. Validez avant enregistrement.',
         data: {
           extracted: {
             amount: extracted.amount,
@@ -335,16 +241,306 @@ exports.analyzeReceipt = async (req, res, next) => {
             date: extracted.date,
             description: typeof extracted.description === 'string' ? extracted.description : '',
           },
-          energyBalance: updatedManager.energyBalance,
+          energyBalance: updatedUser.energyBalance,
         },
       });
     } catch (err) {
+      // Rollback energy on Gemini failure
       await User.updateOne(
-        { _id: managerId },
+        { _id: userId },
         { $inc: { energyBalance: ENERGY_COST_ANALYZE_RECEIPT } }
       );
       throw err;
     }
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Add expense (save from analyzed receipt or manual entry)
+ * POST /api/kash/add
+ */
+exports.addExpense = async (req, res, next) => {
+  try {
+    const userId = req.user?.id;
+
+    if (!userId) {
+      return res.status(401).json({ success: false, message: 'Unauthorized' });
+    }
+
+    const { amount, currency, vendor, category, date, description, employeeId } = req.body ?? {};
+
+    if (amount === undefined || amount === null || amount === '') {
+      return res.status(400).json({ success: false, message: 'amount requis' });
+    }
+
+    const normalizedAmount = Number(amount);
+    if (!Number.isFinite(normalizedAmount)) {
+      return res.status(400).json({ success: false, message: 'amount invalide' });
+    }
+
+    // Atomic energy debit
+    const updatedUser = await User.findOneAndUpdate(
+      { _id: userId, energyBalance: { $gte: ENERGY_COST_ADD_EXPENSE } },
+      { $inc: { energyBalance: -ENERGY_COST_ADD_EXPENSE } },
+      { new: true }
+    ).lean();
+
+    if (!updatedUser) {
+      return res.status(403).json({
+        success: false,
+        message: 'Énergie insuffisante pour ajouter une dépense',
+      });
+    }
+
+    try {
+      const expense = await Expense.create({
+        managerId: userId,
+        employeeId: employeeId || null,
+        amount: normalizedAmount,
+        ...(currency !== undefined ? { currency } : {}),
+        ...(vendor !== undefined ? { vendor } : {}),
+        ...(category !== undefined ? { category } : {}),
+        ...(date !== undefined ? { date } : {}),
+        ...(description !== undefined ? { description } : {}),
+      });
+
+      return res.status(201).json({
+        success: true,
+        message: 'Dépense ajoutée',
+        data: {
+          expense,
+          energyBalance: updatedUser.energyBalance,
+        },
+      });
+    } catch (err) {
+      // Rollback energy on expense creation failure
+      await User.updateOne(
+        { _id: userId },
+        { $inc: { energyBalance: ENERGY_COST_ADD_EXPENSE } }
+      );
+      throw err;
+    }
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Get all expenses for user (limit 50, sorted by date desc)
+ * GET /api/kash/expenses
+ */
+exports.getExpenses = async (req, res, next) => {
+  try {
+    const userId = req.user?.id;
+
+    if (!userId) {
+      return res.status(401).json({ success: false, message: 'Unauthorized' });
+    }
+
+    const expenses = await Expense.find({ managerId: userId })
+      .sort({ date: -1 })
+      .limit(50)
+      .lean();
+
+    return res.status(200).json({
+      success: true,
+      data: { expenses, total: expenses.length },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Get budget array for user
+ * GET /api/kash/budget
+ */
+exports.getBudget = async (req, res, next) => {
+  try {
+    const userId = req.user?.id;
+
+    if (!userId) {
+      return res.status(401).json({ success: false, message: 'Unauthorized' });
+    }
+
+    const user = await User.findById(userId).select('budget').lean();
+
+    return res.status(200).json({
+      success: true,
+      data: { budget: user?.budget || [] },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Add or update a budget entry
+ * POST /api/kash/budget
+ */
+exports.setBudget = async (req, res, next) => {
+  try {
+    const userId = req.user?.id;
+
+    if (!userId) {
+      return res.status(401).json({ success: false, message: 'Unauthorized' });
+    }
+
+    const { project, amount } = req.body ?? {};
+
+    if (!project || typeof project !== 'string' || !project.trim()) {
+      return res.status(400).json({ success: false, message: 'project requis et valide' });
+    }
+
+    if (amount === undefined || amount === null) {
+      return res.status(400).json({ success: false, message: 'amount requis' });
+    }
+
+    const normalizedAmount = Number(amount);
+    if (!Number.isFinite(normalizedAmount) || normalizedAmount < 0) {
+      return res.status(400).json({ success: false, message: 'amount invalide (doit être >= 0)' });
+    }
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    // Initialize budget array if not exists
+    if (!Array.isArray(user.budget)) {
+      user.budget = [];
+    }
+
+    // Find or create budget entry
+    const existingIndex = user.budget.findIndex((b) => b.project === project);
+    if (existingIndex >= 0) {
+      user.budget[existingIndex].amount = normalizedAmount;
+    } else {
+      user.budget.push({ project, amount: normalizedAmount, spent: 0 });
+    }
+
+    await user.save();
+
+    return res.status(200).json({
+      success: true,
+      message: 'Budget updated',
+      data: { budget: user.budget },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Get all reminders for user (sorted by dueDate asc)
+ * GET /api/kash/reminders
+ */
+exports.getReminders = async (req, res, next) => {
+  try {
+    const userId = req.user?.id;
+
+    if (!userId) {
+      return res.status(401).json({ success: false, message: 'Unauthorized' });
+    }
+
+    const reminders = await Reminder.find({ user: userId })
+      .sort({ dueDate: 1 })
+      .lean();
+
+    return res.status(200).json({
+      success: true,
+      data: { reminders },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Create a new reminder
+ * POST /api/kash/reminders
+ */
+exports.createReminder = async (req, res, next) => {
+  try {
+    const userId = req.user?.id;
+
+    if (!userId) {
+      return res.status(401).json({ success: false, message: 'Unauthorized' });
+    }
+
+    const { title, amount, currency = 'TND', dueDate, notes = '' } = req.body ?? {};
+
+    if (!title || typeof title !== 'string' || !title.trim()) {
+      return res.status(400).json({ success: false, message: 'title requis' });
+    }
+
+    if (amount === undefined || amount === null) {
+      return res.status(400).json({ success: false, message: 'amount requis' });
+    }
+
+    const normalizedAmount = Number(amount);
+    if (!Number.isFinite(normalizedAmount) || normalizedAmount <= 0) {
+      return res.status(400).json({ success: false, message: 'amount invalide (doit être > 0)' });
+    }
+
+    if (!dueDate) {
+      return res.status(400).json({ success: false, message: 'dueDate requis' });
+    }
+
+    const reminder = await Reminder.create({
+      user: userId,
+      title: title.trim(),
+      amount: normalizedAmount,
+      currency: currency || 'TND',
+      dueDate: new Date(dueDate),
+      notes: notes || '',
+      status: 'pending',
+    });
+
+    return res.status(201).json({
+      success: true,
+      message: 'Reminder created',
+      data: { reminder },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Mark reminder as paid
+ * PATCH /api/kash/reminders/:id/mark-paid
+ */
+exports.markReminderPaid = async (req, res, next) => {
+  try {
+    const userId = req.user?.id;
+    const { id } = req.params;
+
+    if (!userId) {
+      return res.status(401).json({ success: false, message: 'Unauthorized' });
+    }
+
+    if (!id) {
+      return res.status(400).json({ success: false, message: 'Reminder ID requis' });
+    }
+
+    const reminder = await Reminder.findOneAndUpdate(
+      { _id: id, user: userId },
+      { status: 'paid', paidAt: new Date() },
+      { new: true }
+    );
+
+    if (!reminder) {
+      return res.status(404).json({ success: false, message: 'Reminder not found' });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Reminder marked as paid',
+      data: { reminder },
+    });
   } catch (error) {
     next(error);
   }
