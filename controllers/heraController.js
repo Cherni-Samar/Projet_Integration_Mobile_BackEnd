@@ -105,6 +105,13 @@ exports.vapiWebhook = async (req, res) => {
     res.json({ result: "Désolée, j'ai rencontré une erreur technique." });
   }
 };
+exports.getAllCandidates = async (req, res) => {
+  try {
+    const candidates = await Candidate.find().sort({ score_ia: -1 });
+    res.json({ success: true, candidates });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+};
+
 // ── FONCTION : CHECK STAFFING (Alerte Echo) ──
 exports.checkStaffingNeeds = async (req, res) => {
   try {
@@ -666,8 +673,16 @@ exports.getAdminStats = async (req, res) => {
   }
 };
 exports.getAllEmployees = async (req, res) => {
-  const employees = await Employee.find();
-  res.json({ success: true, employees });
+  try {
+    // ✅ On ignore les 'inactive' pour ne pas polluer l'écran
+    const employees = await Employee.find({ 
+      status: { $in: ['active', 'onboarding', 'offboarding'] } 
+    }).sort({ name: 1 });
+
+    res.json({ success: true, employees });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 };
 exports.getRecentActions = async (req, res) => {
   try {
@@ -725,7 +740,7 @@ exports.processResignation = async (req, res) => {
     await HeraAction.create({
       employee_id: employee._id,
       action_type: 'offboarding_started',
-      details: { message: `Planning fixé au ${scheduledDate}` },
+     details: { message: `Rendez-vous de sortie fixé au ${planning.date}` },
       triggered_by: 'employee'
     });
 

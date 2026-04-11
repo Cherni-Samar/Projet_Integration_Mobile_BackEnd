@@ -1,25 +1,22 @@
+const TelegramBot = require('node-telegram-bot-api');
 const cron = require('node-cron');
-const { Client, LocalAuth, MessageMedia } = require('whatsapp-web.js');
-const qrcode = require('qrcode-terminal');
 const gTTS = require('gtts');
 const path = require('path');
-const fs = require('fs'); // ✅ Ajout pour vérifier le fichier
+const fs = require('fs');
 const dexoController = require('../controllers/dexoController');
 
-const client = new Client({
-    authStrategy: new LocalAuth(),
-    puppeteer: { args: ['--no-sandbox'] }
-});
-
-client.on('qr', (qr) => qrcode.generate(qr, { small: true }));
-client.on('ready', () => console.log('🚀 Dexo WhatsApp est prêt !'));
+// 1. Configuration (Remplace bien par ton NOUVEAU token si tu l'as changé)
+const token = '8667434515:AAE6lfzLQc-30QGU4RKT-nKR0EVdARjoP-E'; 
+const bot = new TelegramBot(token, { polling: true });
+const chatId = '8680134191'; 
 
 const runAutomatedVocalBriefing = async () => {
-    console.log("🕒 Dexo prépare le rapport vocal...");
+    console.log("🕒 [DEXO] Déclenchement du rapport...");
 
     try {
         const text = await dexoController.generateBriefingLogic();
-        const cleanText = text.replaceAll('*', '');
+        const cleanText = text.replaceAll('*', ''); 
+        
         const filePath = path.join(__dirname, 'daily_report.mp3');
         const gtts = new gTTS(cleanText, 'fr');
 
@@ -33,37 +30,31 @@ const runAutomatedVocalBriefing = async () => {
         };
 
         await saveAudio();
-        console.log("💾 Fichier MP3 créé avec succès");
 
-        // ✅ STRATÉGIE D'ENVOI
-        let targetId;
-
-        // Option A : Envoyer à SOI-MÊME (Le plus fiable pour la démo)
-        // Cela utilise l'identifiant du compte qui a scanné le QR Code
-        targetId = client.info.wid._serialized; 
-        
-        /* 
-        // Option B : Si tu veux envoyer à un AUTRE numéro (décommente si besoin)
-        const rawNumber = "216XXXXXXXX"; 
-        const contactId = await client.getNumberId(rawNumber);
-        if (contactId) {
-            targetId = contactId._serialized;
-        }
-        */
-
-        if (targetId) {
-            const media = MessageMedia.fromFilePath(filePath);
-            await client.sendMessage(targetId, media, { sendAudioAsVoice: true });
-            console.log("✅ Message vocal envoyé avec succès à :", targetId);
-        } else {
-            console.error("❌ Erreur : Aucun destinataire trouvé.");
+        if (fs.existsSync(filePath)) {
+            await bot.sendVoice(chatId, fs.createReadStream(filePath), {
+                caption: "🌙 *Daily Check-up CEO* - Rapport de Test 22:43",
+                parse_mode: 'Markdown'
+            });
+            console.log("✅ Rapport vocal envoyé avec succès !");
         }
 
     } catch (e) {
-        console.error("❌ Erreur durant l'envoi WhatsApp:", e.message);
+        console.error("❌ Erreur lors du briefing:", e.message);
     }
 };
 
-client.initialize();
+// ── ✅ TEST : DÉCLENCHEMENT À 22H43 (Heure Tunisie) ──
+// ── ✅ PLANIFICATION FINALE : TOUS LES JOURS À 21H00 (TUNISIE) ──
+cron.schedule('0 21 * * *', () => {
+    console.log("🕒 [DEXO] Il est 21h00. Génération du rapport quotidien...");
+    runAutomatedVocalBriefing();
+}, {
+    scheduled: true,
+    timezone: "Africa/Tunis"
+});
+
+console.log("✅ Le briefing automatique est programmé pour 21h00 tous les soirs.");
+
 
 module.exports = { runAutomatedVocalBriefing };

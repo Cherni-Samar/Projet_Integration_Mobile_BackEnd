@@ -1,5 +1,7 @@
 const HeraAction = require('../models/HeraAction');
 const heraAgent = require('../services/hera.agent');
+const nodemailer = require('nodemailer');
+const Employee = require('../models/Employee'); // ✅ INDISPENSABLE : Ajoute cette ligne !
 
 exports.getDailyCheckUp = async (req, res) => {
   try {
@@ -47,11 +49,12 @@ const generateBriefingLogic = async () => {
         return "🏢 Statut : Calme. Aucune activité RH majeure à signaler pour le moment.";
     }
 
-    const logSummary = actions.map(a => {
+const logSummary = actions.map(a => {
         let type = a.action_type;
         if (type === 'absence_alert') type = "Alerte staffing";
         if (type === 'contract_renewal') type = "Onboarding contrat";
         if (type === 'leave_approved') type = "Congé validé";
+        if (type === 'doc_request') type = "Document envoyé par mail"; // <--- Ajoute ça
         return `- ${type} pour ${a.employee_id?.name || a.details?.department || 'système'}`;
     }).join('\n');
 
@@ -59,5 +62,48 @@ const generateBriefingLogic = async () => {
     const aiResponse = await heraAgent.llm.invoke(prompt);
     
     return aiResponse.content;
+};
+// Configuration du transporteur de mail (ex: Gmail)
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: 'eya.mosbahi@esprit.tn',
+    pass: '221JFT5553' 
+  }
+});
+
+exports.requestDocument = async (req, res) => {
+  const { employeeId, docType } = req.body; // docType: 'attestation', 'contrat', 'bulletin'
+
+  try {
+    // 1. Chercher l'employé et son email
+    const employee = await Employee.findById(employeeId); 
+    if (!employee) return res.status(404).json({ message: "Employé non trouvé" });
+
+    // 2. Définir le chemin du fichier (tu dois avoir ces PDF quelque part sur ton serveur)
+    const filePath = `./storage/docs/${docType}_${employeeId}.pdf`;
+
+    // 3. Envoyer le mail
+    const mailOptions = {
+      from: '"Dexo IA" <ton-email@gmail.com>',
+      to: employee.email,
+      subject: `Votre ${docType} - E-Team`,
+      text: `Bonjour ${employee.name}, voici le document demandé par Dexo.`,
+      attachments: [{ filename: `${docType}.pdf`, path: filePath }]
+    };
+
+    await transporter.sendMail(mailOptions);
+
+    // 4. Enregistrer l'action dans HeraAction pour que ça apparaisse dans le rapport du soir !
+    await HeraAction.create({
+      action_type: 'doc_request',
+      employee_id: employeeId,
+      details: { document: docType, status: 'sent_by_email' }
+    });
+
+    res.json({ success: true, message: "Document envoyé par mail." });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 };
 exports.generateBriefingLogic = generateBriefingLogic;

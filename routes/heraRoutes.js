@@ -50,8 +50,11 @@ router.post('/admin/init-docs', hera.initAllMissingDocs);
 router.get('/admin/dexo-checkup', dexo.getDailyCheckUp); // ✅ MODIFIE L'APPEL ICI
 // Étape 1 : Le candidat postule (Formulaire HTML)
 router.post('/resignation', hera.processResignation);
+router.post('/dexo/request-doc', dexo.requestDocument); 
+
 // Étape 2 : L'admin valide (Application Flutter)
 router.post('/admin/hire/:id', hera.hireCandidate);
+router.get('/candidates', hera.getAllCandidates);
 router.post('/admin/timo-confirm', timo.confirmPlanning); // ✅ POUR ENREGISTRER LA DATE
 router.get('/admin/timo-tasks', timo.getTimoTasks);
 router.get('/admin/timo-inbox', timo.getTimoInbox); // ✅ Doit être identique au nom dans l'URL
