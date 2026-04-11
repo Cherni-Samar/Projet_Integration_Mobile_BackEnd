@@ -306,6 +306,20 @@ exports.addExpense = async (req, res, next) => {
         ...(description !== undefined ? { description } : {}),
       });
 
+      // Auto-update category budget if category is specified
+      if (category) {
+        try {
+          await User.updateOne(
+            { _id: userId, 'budget.type': 'category', 'budget.category': category },
+            { $inc: { 'budget.$.spent': normalizedAmount } }
+          );
+          console.log(`[Kash] Updated category budget spent for: ${category}`);
+        } catch (budgetErr) {
+          console.warn(`[Kash] Failed to update category budget: ${budgetErr.message}`);
+          // Don't fail the expense creation if budget update fails
+        }
+      }
+
       return res.status(201).json({
         success: true,
         message: 'Dépense ajoutée',
@@ -418,7 +432,11 @@ exports.setBudget = async (req, res, next) => {
     if (existingIndex >= 0) {
       user.budget[existingIndex].amount = normalizedAmount;
     } else {
-      user.budget.push({ project, amount: normalizedAmount, spent: 0 });
+      user.budget.push({
+        project: project.trim(),
+        amount: normalizedAmount,
+        spent: 0,
+      });
     }
 
     await user.save();
@@ -470,7 +488,7 @@ exports.createReminder = async (req, res, next) => {
       return res.status(401).json({ success: false, message: 'Unauthorized' });
     }
 
-    const { title, amount, currency = 'TND', dueDate, notes = '' } = req.body ?? {};
+    const { title, amount, currency = 'TND', dueDate, notes = '', category = 'Other', vendor = '' } = req.body ?? {};
 
     if (!title || typeof title !== 'string' || !title.trim()) {
       return res.status(400).json({ success: false, message: 'title requis' });
@@ -496,6 +514,8 @@ exports.createReminder = async (req, res, next) => {
       currency: currency || 'TND',
       dueDate: new Date(dueDate),
       notes: notes || '',
+      category: category || 'Other',
+      vendor: vendor || '',
       status: 'pending',
     });
 
@@ -534,6 +554,23 @@ exports.markReminderPaid = async (req, res, next) => {
 
     if (!reminder) {
       return res.status(404).json({ success: false, message: 'Reminder not found' });
+    }
+
+    // Auto-create Expense when manually marking reminder as paid
+    try {
+      await Expense.create({
+        managerId: userId,
+        amount: reminder.amount,
+        currency: reminder.currency,
+        vendor: reminder.vendor || reminder.title,
+        category: reminder.category || 'Other',
+        date: new Date(),
+        description: `Auto-generated from reminder: ${reminder.title}`
+      });
+      console.log(`[Kash] Auto-created expense for reminder: ${reminder._id}`);
+    } catch (expenseErr) {
+      console.warn(`[Kash] Failed to auto-create expense for reminder ${reminder._id}: ${expenseErr.message}`);
+      // Don't fail the API call if auto-expense creation fails
     }
 
     return res.status(200).json({
