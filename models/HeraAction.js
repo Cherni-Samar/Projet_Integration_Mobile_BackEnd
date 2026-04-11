@@ -21,7 +21,7 @@ const heraActionSchema = new mongoose.Schema({
   details:      { type: mongoose.Schema.Types.Mixed },
   triggered_by: {
     type: String,
-    enum: ['employee', 'manager', 'system', 'hera_auto'],
+    enum: ['employee', 'manager', 'system', 'hera_auto', 'auto', 'echo_agent'],
     default: 'auto',
   },
   created_at: { type: Date, default: Date.now },

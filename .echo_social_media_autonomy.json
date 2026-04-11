@@ -1,0 +1,18 @@
+{
+  "lastAutonomousPostAt": "2026-04-11T21:23:20.356Z",
+  "lastPlatforms": [
+    "linkedin",
+    "mastodon"
+  ],
+  "lastResults": {
+    "linkedin": {
+      "success": true,
+      "postId": "urn:li:share:7448843147067105280"
+    },
+    "mastodon": {
+      "success": true,
+      "postId": "116388174290458503",
+      "url": "https://mastodon.social/@e_team/116388174290458503"
+    }
+  }
+}

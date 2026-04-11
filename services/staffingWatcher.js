@@ -58,7 +58,31 @@ const watchStaffing = async () => {
           triggered_by: 'hera_auto'
         });
 
-        console.log(`✅ Message envoyé et enregistré pour Echo concernant le département ${dept}`);
+        // 4. ✅ APPELER AUTOMATIQUEMENT ECHO POUR PUBLIER SUR LINKEDIN
+        try {
+          const echoBaseUrl = process.env.ECHO_API_URL || 'http://localhost:3000/api/echo';
+          const echoResponse = await fetch(`${echoBaseUrl}/receive-staffing-alert`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              department: dept,
+              currentCount: count,
+              maxCapacity: config.max,
+              shortage: config.max - count,
+              postedBy: 'hera_auto_watcher@e-team.com',
+            })
+          });
+          const echoResult = await echoResponse.json();
+          if (echoResult.success) {
+            console.log(`💼 [STAFFING WATCHER] Echo a publié automatiquement sur LinkedIn pour ${dept} ✅`);
+          } else {
+            console.warn(`⚠️ [STAFFING WATCHER] Echo n'a pas pu publier sur LinkedIn :`, echoResult.error || echoResult.message);
+          }
+        } catch (fetchErr) {
+          console.warn(`⚠️ [STAFFING WATCHER] Erreur communication avec Echo :`, fetchErr.message);
+        }
+
+        console.log(`✅ Message envoyé et traité automatiquement par Echo concernant le département ${dept}`);
       }
     }
   }

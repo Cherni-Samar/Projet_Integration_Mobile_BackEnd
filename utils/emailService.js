@@ -313,10 +313,85 @@ const sendStaffingAlert = async (targetEmail, details) => {
     return true;
   } catch (error) { console.error('❌ Erreur alerte staffing:', error); return false; }
 };
+// 3. ✅ Invitation entretien (score > 70)
+const sendCandidacyInvitation = async (email, details) => {
+  try {
+    const transporter = createTransporter();
+    const mailOptions = {
+      from: `"Hera (E-Team RH)" <${process.env.EMAIL_USER}>`,
+      to: email,
+      subject: `🎉 Félicitations ${details.name} ! Entretien programmé chez E-Team`,
+      html: `
+        <div style="font-family: 'Inter', sans-serif; max-width: 600px; margin: auto; border: 1px solid #eee; border-radius: 16px; overflow: hidden;">
+          <div style="background: linear-gradient(135deg, #0A0A0A 0%, #1A1A1A 100%); padding: 30px; text-align: center;">
+            <div style="color: #CDFF00; font-size: 28px; font-weight: bold;">🚀 E-TEAM</div>
+            <p style="color: #888; margin-top: 8px;">Département as a Service</p>
+          </div>
+          <div style="padding: 30px; background: white;">
+            <h2 style="color: #2ecc71;">Félicitations ${details.name} ! 🎉</h2>
+            <p>Votre candidature a été analysée par notre IA <strong>Hera</strong> et votre profil nous intéresse !</p>
+            <div style="background: #f0fff0; border-left: 4px solid #2ecc71; padding: 15px; border-radius: 8px; margin: 20px 0;">
+              <p style="margin: 0;"><strong>📊 Score IA :</strong> <span style="color: #2ecc71; font-size: 20px; font-weight: bold;">${details.score || 'Élevé'}%</span></p>
+            </div>
+            <div style="background: #f8f8f8; padding: 20px; border-radius: 12px; margin: 20px 0;">
+              <h3 style="margin-top: 0;">📅 Votre entretien</h3>
+              <p><strong>Date :</strong> ${details.interview_date}</p>
+              <p><strong>Lien visio :</strong> <a href="${details.meeting_link}" style="color: #A855F7;">${details.meeting_link}</a></p>
+            </div>
+            <p>Nous avons hâte de vous rencontrer !</p>
+          </div>
+          <div style="background: #f5f5f5; padding: 15px; text-align: center; font-size: 12px; color: #999;">
+            © 2026 E-Team — Analyse IA par Hera 🤖
+          </div>
+        </div>
+      `
+    };
+    await transporter.sendMail(mailOptions);
+    console.log(`✅ Email d'invitation envoyé à ${email}`);
+    return true;
+  } catch (error) { console.error('❌ Erreur mail invitation:', error); return false; }
+};
+
+// 4. ✅ Confirmation simple (score <= 70)
+const sendCandidacyConfirmation = async (email, name) => {
+  try {
+    const transporter = createTransporter();
+    const mailOptions = {
+      from: `"Hera (E-Team RH)" <${process.env.EMAIL_USER}>`,
+      to: email,
+      subject: `📩 Candidature reçue — Merci ${name} !`,
+      html: `
+        <div style="font-family: 'Inter', sans-serif; max-width: 600px; margin: auto; border: 1px solid #eee; border-radius: 16px; overflow: hidden;">
+          <div style="background: linear-gradient(135deg, #0A0A0A 0%, #1A1A1A 100%); padding: 30px; text-align: center;">
+            <div style="color: #CDFF00; font-size: 28px; font-weight: bold;">🚀 E-TEAM</div>
+            <p style="color: #888; margin-top: 8px;">Département as a Service</p>
+          </div>
+          <div style="padding: 30px; background: white;">
+            <h2>Merci ${name} ! 👋</h2>
+            <p>Nous avons bien reçu votre candidature. Notre IA <strong>Hera</strong> a analysé votre profil.</p>
+            <div style="background: #fff8e1; border-left: 4px solid #FFC107; padding: 15px; border-radius: 8px; margin: 20px 0;">
+              <p style="margin: 0;">Votre candidature est en cours d'étude par notre équipe RH. Nous reviendrons vers vous prochainement.</p>
+            </div>
+            <p>En attendant, n'hésitez pas à consulter nos autres offres sur notre page LinkedIn.</p>
+          </div>
+          <div style="background: #f5f5f5; padding: 15px; text-align: center; font-size: 12px; color: #999;">
+            © 2026 E-Team — Analyse IA par Hera 🤖
+          </div>
+        </div>
+      `
+    };
+    await transporter.sendMail(mailOptions);
+    console.log(`✅ Email de confirmation envoyé à ${email}`);
+    return true;
+  } catch (error) { console.error('❌ Erreur mail confirmation:', error); return false; }
+};
+
 module.exports = {
   sendVerificationEmail,
   sendPasswordResetEmail,
   sendWelcomeEmail,
   sendLeaveNotification,
   sendStaffingAlert,
+  sendCandidacyInvitation,
+  sendCandidacyConfirmation,
 };

@@ -24,8 +24,7 @@ const {
   startNgrokDiscoveryRefresh,
 } = require('./utils/recruitmentFormUrl');
 
-// Démarrer la surveillance autonome
-staffingWatcher.watchStaffing();
+// La surveillance autonome est démarrée APRÈS la connexion MongoDB (voir app.listen)
 startEchoSocialMediaAutonomy();
 
 const app = express();
@@ -129,6 +128,9 @@ app.use(errorHandler);
 // 5. Démarrage du serveur
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', async () => {
+  // ✅ Lancer le staffing watcher APRÈS que le serveur et MongoDB sont prêts
+  console.log('🕵️ Lancement initial du staffing watcher...');
+  staffingWatcher.watchStaffing().catch(err => console.error('staffingWatcher initial:', err.message));
   const ngrokBase = await tryDiscoverNgrokPublicBase();
   if (ngrokBase) {
     setDiscoveredPublicBase(ngrokBase);

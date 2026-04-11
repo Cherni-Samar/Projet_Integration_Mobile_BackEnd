@@ -362,17 +362,51 @@ exports.receiveHeraStaffingAlert = async (req, res) => {
     console.log(`   Manquants   : ${shortage || (maxCapacity - currentCount)}`);
     console.log(`${'═'.repeat(60)}\n`);
 
-    // ── 1. Echo rédige le post LinkedIn via son IA ──────────────
-    const recruitmentFormUrl = process.env.RECRUITMENT_FORM_URL || 'http://localhost:3000/candidature';
     const postes = shortage || (maxCapacity - currentCount);
 
+    // ── Mapping spécialité + hard skills par département ─────
+    const DEPARTMENT_SKILLS = {
+      Tech:      { specialite: 'Développement logiciel & IA', hardSkills: ['JavaScript/Node.js', 'React/React Native', 'Python', 'MongoDB', 'DevOps/CI-CD', 'API REST'] },
+      Design:    { specialite: 'Design UX/UI', hardSkills: ['Figma', 'Adobe XD', 'Prototypage', 'Design System', 'User Research', 'Responsive Design'] },
+      Marketing: { specialite: 'Marketing Digital', hardSkills: ['SEO/SEM', 'Google Analytics', 'Social Media Ads', 'Content Marketing', 'Email Marketing', 'KPIs & Reporting'] },
+      RH:        { specialite: 'Ressources Humaines', hardSkills: ['Gestion des talents', 'SIRH', 'Droit du travail', 'Recrutement', 'Formation', 'Gestion de la paie'] },
+      Finance:   { specialite: 'Finance & Comptabilité', hardSkills: ['Comptabilité générale', 'Excel avancé', 'SAP/ERP', 'Analyse financière', 'Trésorerie', 'Fiscalité'] },
+      Support:   { specialite: 'Support Client', hardSkills: ['CRM (Zendesk/Freshdesk)', 'Communication écrite', 'Résolution de problèmes', 'ITIL', 'Ticketing', 'Satisfaction client'] },
+    };
+
+    const deptInfo = DEPARTMENT_SKILLS[department] || { specialite: department, hardSkills: ['Polyvalence', 'Travail en équipe'] };
+    const jobDescription = `Poste en ${deptInfo.specialite}. Compétences requises : ${deptInfo.hardSkills.join(', ')}.`;
+
+    // ── 0. Créer une JobOffer en BDD (pré-remplie par Héra) ─────
+    const JobOffer = require('../models/JobOffer');
+    const jobOffer = await JobOffer.create({
+      document_type: 'opening',
+      title: `${deptInfo.specialite} — ${postes} poste(s)`,
+      department: department,
+      description: jobDescription,
+      status: 'open',
+    });
+    console.log(`📋 [ECHO] JobOffer créée : ${jobOffer._id}`);
+
+    // ── 1. Echo rédige le post LinkedIn via son IA ──────────────
+    const publicBase = process.env.PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
+    const recruitmentFormUrl = `${publicBase}/form?department=${encodeURIComponent(department)}&job_offer_id=${jobOffer._id}`;
+
     const prompt = `Tu es Echo, l'agent IA de communication de E-Team.
-Rédige un post LinkedIn professionnel et accrocheur pour recruter ${postes} personne(s) dans le département "${department}".
+Rédige un post LinkedIn professionnel et accrocheur pour recruter ${postes} personne(s).
+
+INFORMATIONS DU POSTE :
+- Département : ${department}
+- Spécialité : ${deptInfo.specialite}
+- Hard Skills recherchés : ${deptInfo.hardSkills.join(', ')}
+- Nombre de postes : ${postes}
 
 Contraintes :
 - Maximum 280 mots
 - Commence par une accroche percutante avec un emoji
-- Mentionne le département "${department}", le nombre de postes (${postes})
+- OBLIGATOIRE : mentionne la spécialité "${deptInfo.specialite}"
+- OBLIGATOIRE : liste au moins 4 hard skills parmi : ${deptInfo.hardSkills.join(', ')}
+- OBLIGATOIRE : inclus une courte description du poste (2-3 lignes)
 - Invite à postuler via ce lien : ${recruitmentFormUrl}
 - Termine avec 5 hashtags pertinents (#Recrutement #Emploi + 3 liés au domaine)
 - Ton : professionnel, dynamique, moderne
@@ -419,7 +453,7 @@ Rédige UNIQUEMENT le texte du post LinkedIn, sans commentaire.`;
         sender: postedBy || 'hera@e-team.com',
         to: 'echo@e-team.com',
         subject: `[STAFFING] Recrutement ${department} — ${postes} poste(s) manquant(s)`,
-        content: `Alerte reçue de Héra. Post LinkedIn ${publishResult.success ? 'publié (ID: ' + publishResult.postId + ')' : 'ÉCHEC: ' + publishResult.error}.\n\n${linkedinPostText}`,
+        content: `Alerte reçue de Héra. JobOffer: ${jobOffer._id}. Post LinkedIn ${publishResult.success ? 'publié (ID: ' + publishResult.postId + ')' : 'ÉCHEC: ' + publishResult.error}.\n\n${linkedinPostText}`,
         receivedAt: new Date(),
         isRead: false,
         isUrgent: true,
@@ -440,6 +474,8 @@ Rédige UNIQUEMENT le texte du post LinkedIn, sans commentaire.`;
         : `⚠️ Post généré mais publication LinkedIn échouée`,
       linkedinPost: linkedinPostText,
       linkedinResult: publishResult,
+      jobOfferId: jobOffer._id,
+      formUrl: recruitmentFormUrl,
       department,
       shortage: postes,
     });

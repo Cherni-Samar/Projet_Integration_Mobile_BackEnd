@@ -266,7 +266,55 @@ class LinkedInService {
     return null;
   }
 
-  async post(message) {
+  /**
+   * Upload une image sur LinkedIn et retourne l'image URN
+   * @param {Buffer} imageBuffer - Le buffer de l'image
+   * @returns {Promise<string|null>} - L'URN de l'image ou null
+   */
+  async uploadImage(imageBuffer) {
+    if (!this.accessToken || !this.personUrn) return null;
+
+    try {
+      // 1. Initialiser l'upload
+      const initResponse = await axios.post(
+        'https://api.linkedin.com/rest/images?action=initializeUpload',
+        {
+          initializeUploadRequest: {
+            owner: this.personUrn,
+          },
+        },
+        {
+          headers: {
+            Authorization: `Bearer ${this.accessToken}`,
+            'Content-Type': 'application/json',
+            'LinkedIn-Version': '202504',
+            'X-Restli-Protocol-Version': '2.0.0',
+          },
+        }
+      );
+
+      const uploadUrl = initResponse.data.value.uploadUrl;
+      const imageUrn = initResponse.data.value.image;
+
+      // 2. Uploader le binaire
+      await axios.put(uploadUrl, imageBuffer, {
+        headers: {
+          Authorization: `Bearer ${this.accessToken}`,
+          'Content-Type': 'image/png',
+        },
+        maxContentLength: Infinity,
+        maxBodyLength: Infinity,
+      });
+
+      console.log(`📷 [LINKEDIN] Image uploadée: ${imageUrn}`);
+      return imageUrn;
+    } catch (error) {
+      console.warn('⚠️ LinkedIn image upload failed:', error.response?.data || error.message);
+      return null;
+    }
+  }
+
+  async post(message, imageBuffer) {
     this.refreshFromDisk();
     if (!this.accessToken) {
       return {
@@ -297,27 +345,86 @@ class LinkedInService {
     }
 
     try {
-      const response = await axios.post(
-        'https://api.linkedin.com/v2/ugcPosts',
-        {
-          author,
-          lifecycleState: 'PUBLISHED',
-          specificContent: {
-            'com.linkedin.ugc.ShareContent': {
-              shareCommentary: { text },
-              shareMediaCategory: 'NONE',
+      // Upload image si fournie
+      let imageUrn = null;
+      if (imageBuffer) {
+        imageUrn = await this.uploadImage(imageBuffer);
+      }
+
+      // Construire le contenu du post
+      const shareContent = {
+        shareCommentary: { text },
+        shareMediaCategory: imageUrn ? 'IMAGE' : 'NONE',
+      };
+
+      // Ajouter l'image si elle a été uploadée
+      if (imageUrn) {
+        shareContent.media = [
+          {
+            status: 'READY',
+            media: imageUrn,
+          },
+        ];
+      }
+
+      let response;
+
+      if (imageUrn) {
+        // ── POST avec image → utiliser /rest/posts (nouveau format REST) ──
+        response = await axios.post(
+          'https://api.linkedin.com/rest/posts',
+          {
+            author,
+            commentary: text,
+            visibility: 'PUBLIC',
+            distribution: {
+              feedDistribution: 'MAIN_FEED',
+              targetEntities: [],
+              thirdPartyDistributionChannels: [],
+            },
+            content: {
+              media: {
+                title: 'E-Team Publication',
+                id: imageUrn,
+              },
+            },
+            lifecycleState: 'PUBLISHED',
+            isReshareDisabledByAuthor: false,
+          },
+          {
+            headers: {
+              Authorization: `Bearer ${this.accessToken}`,
+              'Content-Type': 'application/json',
+              'LinkedIn-Version': '202504',
+              'X-Restli-Protocol-Version': '2.0.0',
+            },
+          }
+        );
+      } else {
+        // ── POST sans image → utiliser /v2/ugcPosts (ancien format) ──
+        response = await axios.post(
+          'https://api.linkedin.com/v2/ugcPosts',
+          {
+            author,
+            lifecycleState: 'PUBLISHED',
+            specificContent: {
+              'com.linkedin.ugc.ShareContent': {
+                shareCommentary: { text },
+                shareMediaCategory: 'NONE',
+              },
+            },
+            visibility: {
+              'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC',
             },
           },
-          visibility: {
-            'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC',
-          },
-        },
-        {
-          headers: linkedinHeaders(this.accessToken, {
-            'Content-Type': 'application/json',
-          }),
-        }
-      );
+          {
+            headers: linkedinHeaders(this.accessToken, {
+              'Content-Type': 'application/json',
+            }),
+          }
+        );
+      }
+
       if (this.accessToken && this.personUrn) {
         try {
           const raw = fs.existsSync(this.tokenFile)
@@ -328,7 +435,7 @@ class LinkedInService {
           /* ignore */
         }
       }
-      return { success: true, postId: response.data.id };
+      return { success: true, postId: response.data?.id || response.headers?.['x-restli-id'] || 'published' };
     } catch (error) {
       const data = error.response?.data;
       console.error('LinkedIn ugcPosts:', data || error.message);
