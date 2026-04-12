@@ -5,12 +5,14 @@
 const mongoose = require("mongoose");
 const echoAgent = require("../agents/Echoagent");
 const InboxEmail = require("../models/InboxEmail");
+const EmailReply = require('../models/EmailReply'); // ✅ IMPORT DU MODÈLE REPLIES
 const inboxStatsService = require("../services/inboxStatsService");
 const autoReplyManager = require("../services/autoReplyManager");
 const { emailToClient } = require("../utils/emailSerialize");
 const { reinitialiserMemoire } = echoAgent;
+const linkedinService = require("../services/linkedin.service");
 
-console.log('echoAgent loaded:', echoAgent);
+//console.log('echoAgent loaded:', echoAgent);
 
 // ─────────────────────────────────────────────
 exports.analyser = async (req, res) => {
@@ -344,6 +346,108 @@ exports.sendToHera = async (req, res) => {
 };
 
 // ─────────────────────────────────────────────
+// 🔔 REÇOIT L'ALERTE DE HÉRA → GÉNÈRE + PUBLIE OFFRE LINKEDIN
+// POST /api/echo/receive-staffing-alert
+// ─────────────────────────────────────────────
+// 🔔 REÇOIT L'ALERTE DE HÉRA → GÉNÈRE + PUBLIE OFFRE LINKEDIN + RÉPOND
+// POST /api/echo/receive-staffing-alert
+exports.receiveHeraStaffingAlert = async (req, res) => {
+  try {
+    // 1. Récupération des données (Hera doit envoyer emailId pour la liaison)
+    const { department, currentCount, maxCapacity, shortage, postedBy, emailId } = req.body;
+
+    if (!department) {
+      return res.status(400).json({ success: false, error: "Le champ 'department' est requis" });
+    }
+
+    console.log(`📩 [ECHO] Alerte staffing reçue pour le département : ${department}`);
+    const postes = shortage || (maxCapacity - currentCount);
+
+    // ── Mapping spécialité + hard skills par département ─────
+    const DEPARTMENT_SKILLS = {
+      Tech:      { specialite: 'Développement logiciel & IA', hardSkills: ['JavaScript/Node.js', 'React/React Native', 'Python', 'MongoDB'] },
+      Design:    { specialite: 'Design UX/UI', hardSkills: ['Figma', 'Adobe XD', 'Prototypage'] },
+      Marketing: { specialite: 'Marketing Digital', hardSkills: ['SEO/SEM', 'Google Analytics', 'Social Media Ads'] },
+      RH:        { specialite: 'Ressources Humaines', hardSkills: ['Gestion des talents', 'Droit du travail'] },
+      Finance:   { specialite: 'Finance & Comptabilité', hardSkills: ['Analyse financière', 'Excel avancé'] },
+      Support:   { specialite: 'Support Client', hardSkills: ['CRM (Zendesk)', 'Ticketing'] },
+    };
+
+    const deptInfo = DEPARTMENT_SKILLS[department] || { specialite: department, hardSkills: ['Polyvalence'] };
+    const jobDescription = `Poste en ${deptInfo.specialite}. Skills: ${deptInfo.hardSkills.join(', ')}.`;
+
+    // ── 0. Créer une JobOffer en BDD ─────
+    const JobOffer = require('../models/JobOffer');
+    const jobOffer = await JobOffer.create({
+      document_type: 'opening',
+      title: `${deptInfo.specialite} — ${postes} poste(s)`,
+      department: department,
+      description: jobDescription,
+      status: 'open',
+    });
+
+    // ── 1. Préparation du post ──────────────
+    const publicBase = process.env.PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
+    const recruitmentFormUrl = `${publicBase}/form?department=${encodeURIComponent(department)}&job_offer_id=${jobOffer._id}`;
+
+    const linkedinPostText = `The future of work is agentic. E-Team is scaling. 🚀\n\nOur AI-driven ecosystem is looking for a ${deptInfo.specialite} to join the team.\n\n📍 Role: ${deptInfo.specialite}\n🛠 Skills: ${deptInfo.hardSkills.join(', ')}\n\n📩 Apply here: ${recruitmentFormUrl}\n\n#AI #Innovation #Recrutement #ETeam`;
+
+    // ── 2. Publication LinkedIn ──────────────────────────────
+    const linkedinService = require('../services/linkedin.service');
+    const publishResult = await linkedinService.post(linkedinPostText);
+
+    // ── 3. ✅ RÉPONSE TECHNIQUE (Table: email_replies) ────────────────
+    if (emailId) {
+      try {
+        const EmailReply = require('../models/EmailReply');
+        await EmailReply.create({
+          emailId: emailId, // Liaison avec l'ID du mail de Hera
+          replyContent: `Bonjour Hera, j'ai traité ton alerte. L'offre pour ${department} est en ligne. ID LinkedIn: ${publishResult.postId || 'Simulé'}.`,
+          sentBy: 'echo@e-team.com',
+          status: 'sent',
+          channel: 'internal'
+        });
+        console.log("✅ [ECHO] Entrée créée dans la table email_replies");
+      } catch (replyErr) {
+        console.error("❌ Erreur table email_replies:", replyErr.message);
+      }
+    }
+
+    // ── 4. ✅ RÉPONSE VISUELLE (Table: emails - Inbox Hera) ───────────
+    try {
+      await InboxEmail.create({
+        sender: 'echo@e-team.com',
+        to: 'hera@e-team.com', // Echo écrit à Hera
+        subject: `RE: [STAFFING] Recrutement ${department}`,
+        content: `Salut Hera, l'alerte pour ${department} a été traitée. \nPost LinkedIn : ✅ Publié \nFormulaire : ${recruitmentFormUrl}`,
+        receivedAt: new Date(),
+        isRead: false,
+        category: 'recrutement',
+        priority: 'medium',
+        summary: `Recrutement ${department} lancé.`
+      });
+      console.log("✅ [ECHO] Message de confirmation envoyé dans l'Inbox de Hera");
+    } catch (dbErr) {
+      console.warn('⚠️ Erreur trace InboxEmail :', dbErr.message);
+    }
+
+    // ── 5. Réponse finale à l'API ────────────────────────────────────────
+    return res.json({
+      success: true,
+      agent: 'Echo',
+      message: "Publication effectuée et réponse enregistrée.",
+      jobOfferId: jobOffer._id,
+      linkedinPost: linkedinPostText
+    });
+
+  } catch (error) {
+    console.error('❌ [ECHO] Erreur receiveHeraStaffingAlert:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+
+// ─────────────────────────────────────────────
 exports.classifyDocument = async (req, res) => {
   try {
     const { content } = req.body;
@@ -389,7 +493,6 @@ exports.saveDocument = async (req, res) => {
       });
     }
 
-    console.log(`💾 Sauvegarde de document classifié - Catégorie: ${classification.category}`);
 
     const result = await echoAgent.saveClassifiedDocument(content, classification);
 
@@ -418,7 +521,6 @@ exports.getDocumentsByCategory = async (req, res) => {
       });
     }
 
-    console.log(`📂 Récupération documents Echo - Catégorie: ${category}`);
 
     const result = await echoAgent.getDocumentsByCategory(category, confidentialityLevel);
 
@@ -445,7 +547,6 @@ exports.getDocumentContent = async (req, res) => {
       });
     }
 
-    console.log(`📖 Récupération contenu document Echo: ${documentId}`);
 
     const result = await echoAgent.getDocumentContent(documentId);
 
@@ -472,7 +573,6 @@ exports.extractAndSaveTasks = async (req, res) => {
       });
     }
 
-    console.log(`📋 Extraction et sauvegarde tâches pour: ${message.substring(0, 50)}...`);
 
     const result = await echoAgent.extractAndSaveTasks(
       message,
@@ -497,7 +597,6 @@ exports.getTasks = async (req, res) => {
   try {
     const { status, category } = req.query;
 
-    console.log(`📋 Récupération tâches - Status: ${status}, Category: ${category}`);
 
     const result = await echoAgent.getTasks('current_user', status, category);
 
@@ -540,7 +639,6 @@ exports.updateTaskStatus = async (req, res) => {
       });
     }
 
-    console.log(`📋 Mise à jour statut tâche: ${taskId} -> ${status}`);
 
     const result = await echoAgent.updateTaskStatus(taskId, status);
 
@@ -567,7 +665,6 @@ exports.deleteTask = async (req, res) => {
       });
     }
 
-    console.log(`📋 Suppression tâche: ${taskId}`);
 
     const result = await echoAgent.deleteTask(taskId);
 
@@ -650,7 +747,7 @@ exports.markEmailRead = async (req, res) => {
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({ success: false });
     }
-    const email = await InboxEmail.findByIdAndUpdate(id, { isRead: true }, { new: true });
+    const email = await InboxEmail.findByIdAndUpdate(id, { isRead: true }, { returnDocument: 'after' });
     if (!email) return res.status(404).json({ success: false });
     res.json({ success: true });
   } catch (error) {
@@ -695,6 +792,34 @@ exports.resetMemoire = async (req, res) => {
 };
 
 // ─────────────────────────────────────────────
+exports.publishToLinkedIn = async (req, res) => {
+  try {
+    const { content } = req.body;
+    
+    if (!content) {
+      return res.status(400).json({
+        success: false,
+        error: "Le champ 'content' est requis"
+      });
+    }
+    
+    const result = await linkedinService.post(content);
+    
+    res.json({
+      success: true,
+      result: result,
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('❌ Erreur publication LinkedIn:', error);
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+};
+
+// ─────────────────────────────────────────────
 exports.sante = (req, res) => {
   res.json({
     status: "✅ Agent Echo opérationnel avec LangChain + Gestion Documents",
@@ -712,7 +837,7 @@ exports.sante = (req, res) => {
       "💾 Sauvegarde de documents classifiés",
       "📂 Gestion par catégories",
       "🔍 Recherche de contenu",
-      "📋 Gestion de tâches intelligente",
+      //"📋 Gestion de tâches intelligente",
       "⏰ Suivi des échéances et priorités"
     ],
     endpoints: [
@@ -721,7 +846,7 @@ exports.sante = (req, res) => {
       "POST /extract-tasks", "POST /batch", "POST /batch-advanced",
       "POST /classify-document", "POST /save-document",
       "GET /documents/:category", "GET /document-content/:id",
-      "POST /extract-save-tasks", "GET /tasks",
+      //"POST /extract-save-tasks", "GET /tasks",
       "PATCH /tasks/:id/status", "DELETE /tasks/:id",
       "GET /stats", "GET /emails", "GET /pending",
       "PATCH /emails/:id/read", "DELETE /emails/:id"

@@ -588,10 +588,329 @@ const sendHeraConvocation = async (email, details) => {
   }
 };
 
-// ⚠️ N'OUBLIE PAS de l'ajouter dans ton module.exports tout en bas :
 
+// ✅ AJOUTE CETTE FONCTION TOUT EN BAS DE utils/emailService.js
+// ✅ 1. Définition de la fonction comme une constante (comme les autres)
+const sendHeraDocumentEmail = async (toEmail, docData) => {
+  try {
+    console.log('[HERA] Préparation email pour:', toEmail);
+    console.log('[HERA] Document:', docData.type);
+    console.log('[HERA] PDF:', docData.pdfFilename);
 
+    const transporter = createTransporter();
 
+    // Composer le message selon le type de document
+    let subject, htmlContent;
+
+    if (docData.type === "Attestation de Travail") {
+      subject = `Votre ${docData.type} - E-TEAM`;
+      htmlContent = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <style>
+            body { 
+              font-family: 'Helvetica Neue', Arial, sans-serif; 
+              line-height: 1.6; 
+              color: #0A0A0A; 
+              margin: 0;
+              padding: 0;
+              background-color: #FFFFFF;
+            }
+            .container { 
+              max-width: 600px; 
+              margin: 0 auto; 
+              padding: 0;
+              background-color: #FFFFFF;
+            }
+            .header { 
+              background-color: #0A0A0A;
+              color: #FFFFFF; 
+              padding: 40px 30px; 
+              text-align: center;
+              border-bottom: 4px solid #CCFF00;
+            }
+            .header h1 {
+              margin: 0;
+              font-size: 26px;
+              font-weight: 700;
+              letter-spacing: 0.5px;
+            }
+            .header p {
+              margin: 10px 0 0 0;
+              font-size: 14px;
+              color: #CCFF00;
+              font-weight: 500;
+            }
+            .content { 
+              background: #FFFFFF; 
+              padding: 40px 30px; 
+            }
+            .content h2 {
+              color: #0A0A0A;
+              margin-top: 0;
+              font-size: 20px;
+              font-weight: 600;
+            }
+            .content p {
+              margin: 15px 0;
+              color: #0A0A0A;
+              font-size: 15px;
+            }
+            .info-box {
+              background: #F5F5F5;
+              border-left: 4px solid #CCFF00;
+              padding: 20px;
+              margin: 25px 0;
+              border-radius: 4px;
+            }
+            .info-box strong {
+              color: #0A0A0A;
+              font-weight: 600;
+            }
+            .highlight {
+              color: #0A0A0A;
+              font-weight: 600;
+            }
+            .signature {
+              margin-top: 35px;
+              padding-top: 25px;
+              border-top: 2px solid #F5F5F5;
+            }
+            .signature strong {
+              color: #0A0A0A;
+              font-size: 16px;
+            }
+            .signature em {
+              color: #666666;
+              font-style: normal;
+              font-size: 13px;
+            }
+            .footer { 
+              background-color: #0A0A0A;
+              color: #FFFFFF;
+              text-align: center; 
+              padding: 25px 30px;
+              font-size: 12px;
+            }
+            .footer p {
+              margin: 5px 0;
+              color: #CCCCCC;
+            }
+            .lime-accent {
+              color: #CCFF00;
+              font-weight: 600;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <div class="header">
+              <h1>MESSAGE DE HERA</h1>
+              <p>Agent RH Intelligence Artificielle</p>
+            </div>
+            <div class="content">
+              <h2>Bonjour ${docData.name},</h2>
+              <p>Votre <span class="highlight">${docData.type}</span> a été générée par Dexo et est maintenant disponible.</p>
+              ${docData.details.reason ? `
+              <div class="info-box">
+                <strong>Motif de la demande :</strong> ${docData.details.reason}
+              </div>
+              ` : ''}
+              <p>Le document officiel est joint à cet email au format PDF.</p>
+              <p>Cette attestation peut être utilisée pour toutes vos démarches administratives et légales.</p>
+              <div class="signature">
+                <p>Cordialement,</p>
+                <p><strong>Hera</strong></p>
+                <p><em>Agent RH IA - E-TEAM</em></p>
+              </div>
+            </div>
+            <div class="footer">
+              <p>Email automatique envoyé par <span class="lime-accent">Hera</span></p>
+              <p>E-TEAM © 2026 - Tous droits réservés</p>
+            </div>
+          </div>
+        </body>
+        </html>
+      `;
+    } else if (docData.type === "Bulletin de Paie") {
+      subject = `Votre ${docData.type} - ${docData.details.month}/${docData.details.year}`;
+      htmlContent = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <style>
+            body { 
+              font-family: 'Helvetica Neue', Arial, sans-serif; 
+              line-height: 1.6; 
+              color: #0A0A0A; 
+              margin: 0;
+              padding: 0;
+              background-color: #FFFFFF;
+            }
+            .container { 
+              max-width: 600px; 
+              margin: 0 auto; 
+              padding: 0;
+              background-color: #FFFFFF;
+            }
+            .header { 
+              background-color: #0A0A0A;
+              color: #FFFFFF; 
+              padding: 40px 30px; 
+              text-align: center;
+              border-bottom: 4px solid #CCFF00;
+            }
+            .header h1 {
+              margin: 0;
+              font-size: 26px;
+              font-weight: 700;
+              letter-spacing: 0.5px;
+            }
+            .header p {
+              margin: 10px 0 0 0;
+              font-size: 14px;
+              color: #CCFF00;
+              font-weight: 500;
+            }
+            .content { 
+              background: #FFFFFF; 
+              padding: 40px 30px; 
+            }
+            .content h2 {
+              color: #0A0A0A;
+              margin-top: 0;
+              font-size: 20px;
+              font-weight: 600;
+            }
+            .content p {
+              margin: 15px 0;
+              color: #0A0A0A;
+              font-size: 15px;
+            }
+            .period-box {
+              background: #F5F5F5;
+              border: 2px solid #CCFF00;
+              padding: 20px;
+              margin: 25px 0;
+              border-radius: 4px;
+              text-align: center;
+            }
+            .period-box strong {
+              color: #0A0A0A;
+              font-size: 18px;
+              font-weight: 700;
+            }
+            .warning-box {
+              background: #FFF9E6;
+              border-left: 4px solid #CCFF00;
+              padding: 20px;
+              margin: 25px 0;
+              border-radius: 4px;
+            }
+            .warning-box strong {
+              color: #0A0A0A;
+              font-weight: 600;
+            }
+            .highlight {
+              color: #0A0A0A;
+              font-weight: 600;
+            }
+            .signature {
+              margin-top: 35px;
+              padding-top: 25px;
+              border-top: 2px solid #F5F5F5;
+            }
+            .signature strong {
+              color: #0A0A0A;
+              font-size: 16px;
+            }
+            .signature em {
+              color: #666666;
+              font-style: normal;
+              font-size: 13px;
+            }
+            .footer { 
+              background-color: #0A0A0A;
+              color: #FFFFFF;
+              text-align: center; 
+              padding: 25px 30px;
+              font-size: 12px;
+            }
+            .footer p {
+              margin: 5px 0;
+              color: #CCCCCC;
+            }
+            .lime-accent {
+              color: #CCFF00;
+              font-weight: 600;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <div class="header">
+              <h1>MESSAGE DE HERA</h1>
+              <p>Agent RH Intelligence Artificielle</p>
+            </div>
+            <div class="content">
+              <h2>Bonjour ${docData.name},</h2>
+              <p>Votre <span class="highlight">${docData.type}</span> est maintenant disponible.</p>
+              <div class="period-box">
+                <strong>Période : ${docData.details.month}/${docData.details.year}</strong>
+              </div>
+              <p>Le document est joint à cet email au format PDF.</p>
+              <div class="warning-box">
+                <strong>Document confidentiel</strong> - Conservez ce bulletin précieusement pour vos archives personnelles.
+              </div>
+              <p>Pour toute question concernant votre bulletin de paie, veuillez contacter le service des Ressources Humaines.</p>
+              <div class="signature">
+                <p>Cordialement,</p>
+                <p><strong>Hera</strong></p>
+                <p><em>Agent RH IA - E-TEAM</em></p>
+              </div>
+            </div>
+            <div class="footer">
+              <p>Email automatique envoyé par <span class="lime-accent">Hera</span></p>
+              <p>E-TEAM © 2026 - Tous droits réservés</p>
+            </div>
+          </div>
+        </body>
+        </html>
+      `;
+    }
+
+    // Envoyer l'email avec le PDF en pièce jointe
+    const mailOptions = {
+      from: '"Hera - Agent RH IA E-TEAM" <' + process.env.EMAIL_USER + '>',
+      to: toEmail,
+      subject: subject,
+      html: htmlContent,
+      attachments: [
+        {
+          filename: docData.pdfFilename,
+          path: docData.pdfPath
+        }
+      ]
+    };
+
+    console.log('[HERA] Envoi en cours...');
+    
+    const info = await transporter.sendMail(mailOptions);
+    
+    console.log('[HERA] Email envoyé avec succès à', toEmail);
+    console.log('[HERA] Message ID:', info.messageId);
+    console.log('[HERA] Document attaché:', docData.pdfFilename);
+
+    return true;
+  } catch (error) {
+    console.error('[HERA] Erreur envoi email:', error.message);
+    console.error('[HERA] Stack:', error.stack);
+    throw error;
+  }
+};
+
+// ✅ 2. Export global unique (Regroupe tout ici)
 module.exports = {
   sendVerificationEmail,
   sendPasswordResetEmail,
@@ -602,5 +921,6 @@ module.exports = {
   sendGroupMeetingInvitation,
   sendInterviewInvitation,
   sendOffboardingEmail,
-  sendHeraConvocation
+  sendHeraConvocation,
+  sendHeraDocumentEmail // Ajouté ici
 };

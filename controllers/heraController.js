@@ -10,7 +10,9 @@ const dexo = require('../controllers/dexoController');
 const InboxEmail = require('../models/InboxEmail'); // ✅ AJOUTE CETTE LIGNE// ✅ AJOUTE CECI
 const mongoose = require('mongoose');
 const timo = require('./timoController');           // ✅ OBLIGATOIRE pour l'appel autonome
-const bcrypt = require('bcryptjs'); // ✅ Assure-toi d'avoir installé : npm install bcryptjs
+const bcrypt = require('bcryptjs');
+const Document = require('../models/Document'); // ✅ AJOUTE CET IMPORT
+ // ✅ Assure-toi d'avoir installé : npm install bcryptjs
  // ✅ AJOUTE CETTE LIGNE TOUT EN HAUT
 const DEPARTMENT_LIMITS = {
   Tech: { max_employees: 20, max_interns: 2 },
@@ -117,80 +119,118 @@ exports.checkStaffingNeeds = async (req, res) => {
   try {
     const report = [];
     const departments = Object.keys(DEPARTMENT_LIMITS);
-    const InboxEmail = require('../models/InboxEmail'); // On a besoin de vérifier les réponses d'Echo
+    const InboxEmail = require('../models/InboxEmail');
+    const EmailReply = require('../models/EmailReply');
+    const Candidate = require('../models/Candidate'); // Pour vérifier les nouveaux candidats
+
+    // Date de référence : il y a 7 jours
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
     for (const dept of departments) {
       const count = await Employee.countDocuments({ department: dept, status: 'active' });
       const limit = DEPARTMENT_LIMITS[dept].max_employees;
 
-      // 1. Détecter si le département est en sous-effectif (< 80%)
+      // CONDITION 1 : Sous-effectif détecté (< 80%)
       if (count < limit * 0.8) {
         
-        // 2. Chercher la TOUTE DERNIÈRE alerte envoyée pour ce département
-        const lastAlert = await HeraAction.findOne({
+        // CONDITION 2 : Existe-t-il une alerte envoyée DURANT LES 7 DERNIERS JOURS ?
+        const recentAlert = await HeraAction.findOne({
+          action_type: 'absence_alert',
+          'details.department': dept,
+          created_at: { $gt: sevenDaysAgo } // Plus récent que 7 jours
+        }).sort({ created_at: -1 });
+
+        if (recentAlert) {
+          report.push({ 
+            dept, 
+            status: 'WAITING', 
+            reason: "Une alerte a déjà été envoyée cette semaine. On attend les résultats." 
+          });
+          continue; // On passe au département suivant sans rien envoyer
+        }
+
+        // CONDITION 3 : Si une vieille alerte existe, on vérifie si Echo a répondu 
+        // ET si des candidats ont postulé entre-temps
+        const lastAlertEver = await HeraAction.findOne({
           action_type: 'absence_alert',
           'details.department': dept
         }).sort({ created_at: -1 });
 
-        let shouldNotify = false;
-        let statusReason = "";
+        if (lastAlertEver) {
+          // A-t-on reçu des candidats pour ce département depuis la dernière alerte ?
+          const newCandidates = await Candidate.countDocuments({
+            department: dept,
+            created_at: { $gt: lastAlertEver.created_at }
+          });
 
-        if (!lastAlert) {
-          // CAS 1 : Jamais d'alerte envoyée -> On envoie la première
-          shouldNotify = true;
-          statusReason = "Première alerte";
-        } else {
-          // CAS 2 : Une alerte existe, on vérifie si Echo a répondu "OK" (ou autre)
-          // On cherche un mail d'Echo vers Hera arrivé APRÈS la dernière alerte
+          if (newCandidates > 0) {
+            report.push({ 
+              dept, 
+              status: 'OK', 
+              reason: `${newCandidates} nouveaux candidats ont postulé. Recrutement efficace, pas de relance.` 
+            });
+            continue;
+          }
+
+          // Echo a-t-il déjà répondu par un mail de confirmation ?
           const echoResponse = await InboxEmail.findOne({
             sender: "echo@e-team.com",
             to: "hera@e-team.com",
-            receivedAt: { $gt: lastAlert.created_at }
+            receivedAt: { $gt: lastAlertEver.created_at }
           });
 
           if (echoResponse) {
-            // Echo a répondu ! On s'arrête là, le recrutement est en cours.
-            shouldNotify = false;
-            statusReason = "Echo a déjà répondu (Recrutement en cours)";
-          } else {
-            // Echo n'a pas répondu. A-t-on dépassé les 7 jours ?
-            const sevenDaysAgo = new Date();
-            sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
-
-            if (lastAlert.created_at < sevenDaysAgo) {
-              // Plus de 7 jours sans réponse -> Relance hebdomadaire
-              shouldNotify = true;
-              statusReason = "Relance hebdomadaire (Pas de réponse d'Echo)";
-            } else {
-              // Moins de 7 jours, on attend encore
-              shouldNotify = false;
-              statusReason = "En attente de réponse d'Echo (Relance dans moins de 7j)";
-            }
+             // Echo a répondu mais pas de candidats après 7 jours ? 
+             // Là on pourrait relancer, mais selon ta règle on attend encore.
+             report.push({ dept, status: 'WAITING', reason: "Echo a publié, on attend que les candidats remplissent le formulaire." });
+             continue;
           }
         }
 
-        // 3. Exécution de l'envoi si nécessaire
-        if (shouldNotify) {
-          console.log(`📢 Hera envoie un mail à Echo pour le département ${dept} (${statusReason})`);
-          
-          await mailService.sendStaffingAlert("echo-agent@e-team.com", {
-            department: dept,
+        // SI ON ARRIVE ICI : Soit c'est la 1ère fois, soit ça fait + de 7 jours sans résultats
+        console.log(`📢 [HERA] Alerte Staffing hebdomadaire pour : ${dept}`);
+        
+        // 1. Création du mail technique pour Echo
+        const newAlertMail = await InboxEmail.create({
+          sender: "hera@e-team.com",
+          to: "echo@e-team.com",
+          subject: `[STAFFING WEEKLY] Besoin renfort : ${dept}`,
+          content: `Alerte hebdomadaire : Le département ${dept} est à ${count}/${limit}.`,
+          category: 'recrutement',
+          priority: 'high'
+        });
+
+        // 2. Appel API Echo
+        try {
+          await fetch('http://localhost:3000/api/echo/receive-staffing-alert', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              emailId: newAlertMail._id,
+              department: dept,
+              currentCount: count,
+              maxCapacity: limit
+            })
+          });
+        } catch (e) { console.warn("Echo inaccessible"); }
+
+        // 3. Log de l'action dans HeraAction (C'est ce log qui bloque les alertes pendant 7 jours)
+        await HeraAction.create({
+          action_type: 'absence_alert',
+          details: { 
+            department: dept, 
+            email_id: newAlertMail._id, 
             count: count,
-            max: limit,
-            message: `Alerte Staffing : Le département ${dept} a besoin de renforts.`
-          });
+            limit: limit
+          },
+          triggered_by: 'hera_auto'
+        });
 
-          // On enregistre l'action pour marquer la date de l'envoi
-          await HeraAction.create({
-            action_type: 'absence_alert',
-            details: { department: dept, count, limit, note: statusReason },
-            triggered_by: 'hera_auto'
-          });
+        report.push({ dept, status: 'SENT', reason: "Alerte hebdomadaire envoyée à Echo." });
 
-          report.push({ dept, status: 'Mail envoyé', reason: statusReason });
-        } else {
-          report.push({ dept, status: 'Pas de mail', reason: statusReason });
-        }
+      } else {
+        report.push({ dept, status: 'OK', reason: "Effectif suffisant." });
       }
     }
     res.json({ success: true, report });

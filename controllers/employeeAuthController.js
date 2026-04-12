@@ -75,3 +75,20 @@ exports.login = async (req, res) => {
     });
   }
 };
+exports.changePassword = async (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+  try {
+const employee = await Employee.findById(req.employee.id).select('+password');
+    if (!employee) return res.status(404).json({ success: false, message: "Employé non trouvé" });
+
+    const isMatch = await bcrypt.compare(currentPassword, employee.password);
+    if (!isMatch) return res.status(400).json({ success: false, message: "Mot de passe actuel incorrect" });
+
+    employee.password = await bcrypt.hash(newPassword, 10);
+    await employee.save();
+
+    res.json({ success: true, message: "Mot de passe modifié avec succès" });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+};
