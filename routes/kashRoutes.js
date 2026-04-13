@@ -13,6 +13,7 @@ router.get('/expenses', auth, kashController.getExpenses);
 // Budget Management
 router.get('/budget', auth, kashController.getBudget);
 router.post('/budget', auth, kashController.setBudget);
+router.post('/recalculate-budget', auth, kashController.recalculateBudget);
 
 // Reminders
 router.get('/reminders', auth, kashController.getReminders);

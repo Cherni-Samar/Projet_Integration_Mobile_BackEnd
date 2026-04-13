@@ -28,7 +28,6 @@ const expenseSchema = new mongoose.Schema({
   },
   category: {
     type: String,
-    enum: ['SaaS', 'Marketing', 'Travel', 'Office', 'Salaries', 'Other'],
     default: 'Other',
   },
   description: {

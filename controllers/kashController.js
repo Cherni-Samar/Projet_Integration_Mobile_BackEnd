@@ -3,6 +3,7 @@ const User = require('../models/User');
 const Reminder = require('../models/Reminder');
 const axios = require('axios');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const emailSender = require('../services/emailSender');
 
 const ENERGY_COST_ADD_EXPENSE = 5;
 const ENERGY_COST_ANALYZE_RECEIPT = 10;
@@ -175,6 +176,110 @@ async function analyzeReceiptWithGemini({ inlineData }) {
 }
 
 // ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
+
+/**
+ * Recalculate budget spent by summing all expenses matching each budget project
+ * Fetches all expenses for userId, groups by category, updates budget.spent dynamically
+ */
+async function recalculateBudgetSpent(userId) {
+  try {
+    const expenses = await Expense.find({ managerId: userId }).lean();
+    const user = await User.findById(userId);
+    
+    if (!user || !user.budget) {
+      return user;
+    }
+
+    // Zero out all spent values first
+    for (const budget of user.budget) {
+      budget.spent = 0;
+    }
+
+    // Sum expenses by category and update matching budgets
+    for (const budget of user.budget) {
+      const totalSpent = expenses
+        .filter(e => e.category === budget.project)
+        .reduce((sum, e) => sum + (e.amount || 0), 0);
+      
+      budget.spent = totalSpent;
+    }
+
+    await user.save();
+    console.log(`[Kash] Budget spent recalculated for user: ${userId}`);
+    return user;
+  } catch (err) {
+    console.error(`[Kash] Error recalculating budget spent: ${err.message}`);
+    throw err;
+  }
+}
+
+/**
+ * Generate and send budget alert email via Groq + nodemailer
+ */
+async function sendBudgetAlertEmail(user, matchedBudget, alertLevel, category) {
+  try {
+    const percentage = (matchedBudget.spent / matchedBudget.amount) * 100;
+    
+    let emailSubject = '';
+    let emailContent = '';
+
+    if (alertLevel === 'CRITICAL') {
+      emailSubject = `🚨 CRITICAL: Budget "${matchedBudget.project}" Exceeded (${percentage.toFixed(0)}%)`;
+      emailContent = `
+Budget Alert - CRITICAL
+
+Your budget for "${matchedBudget.project}" has EXCEEDED 100%:
+- Budget Amount: ${matchedBudget.amount} DT
+- Current Spent: ${matchedBudget.spent.toFixed(2)} DT
+- Percentage: ${percentage.toFixed(2)}%
+
+This project is now over budget. Please review your expenses and adjust your budget or spending accordingly.
+
+Recent expense added: ${category}
+
+---
+Kash Financial Agent
+e-team PIM System
+      `;
+    } else if (alertLevel === 'WARNING') {
+      emailSubject = `⚠️ WARNING: Budget "${matchedBudget.project}" at ${percentage.toFixed(0)}%`;
+      emailContent = `
+Budget Alert - WARNING
+
+Your budget for "${matchedBudget.project}" has reached 80%:
+- Budget Amount: ${matchedBudget.amount} DT
+- Current Spent: ${matchedBudget.spent.toFixed(2)} DT
+- Percentage: ${percentage.toFixed(2)}%
+
+Consider reviewing your spending to stay within budget.
+
+Recent expense added: ${category}
+
+---
+Kash Financial Agent
+e-team PIM System
+      `;
+    }
+
+    const result = await emailSender.sendEmail({
+      to: user.email,
+      subject: emailSubject,
+      content: emailContent,
+      from: 'kash@e-team.com',
+    });
+
+    console.log(`[Kash Alert] ${alertLevel} email sent to: ${user.email}`);
+    return result;
+  } catch (err) {
+    console.warn(`[Kash] Failed to send budget alert email: ${err.message}`);
+    // Don't fail the expense creation if email sending fails
+    return { success: false, error: err.message };
+  }
+}
+
+// ============================================================================
 // EXPORTED FUNCTIONS
 // ============================================================================
 
@@ -306,16 +411,32 @@ exports.addExpense = async (req, res, next) => {
         ...(description !== undefined ? { description } : {}),
       });
 
-      // Auto-update category budget if category is specified
+      // Recalculate budget spent dynamically instead of incrementing
       if (category) {
         try {
-          await User.updateOne(
-            { _id: userId, 'budget.type': 'category', 'budget.category': category },
-            { $inc: { 'budget.$.spent': normalizedAmount } }
-          );
-          console.log(`[Kash] Updated category budget spent for: ${category}`);
+          const updatedUserForBudget = await recalculateBudgetSpent(userId);
+          
+          // Check if budget alert should be sent
+          if (updatedUserForBudget && updatedUserForBudget.budget) {
+            const matchedBudget = updatedUserForBudget.budget.find(b => b.project === category);
+            
+            if (matchedBudget && matchedBudget.amount > 0) {
+              const percentage = (matchedBudget.spent / matchedBudget.amount) * 100;
+              let alertLevel = null;
+              
+              if (percentage >= 100) {
+                alertLevel = 'CRITICAL';
+              } else if (percentage >= 80) {
+                alertLevel = 'WARNING';
+              }
+
+              if (alertLevel) {
+                await sendBudgetAlertEmail(updatedUserForBudget, matchedBudget, alertLevel, category);
+              }
+            }
+          }
         } catch (budgetErr) {
-          console.warn(`[Kash] Failed to update category budget: ${budgetErr.message}`);
+          console.warn(`[Kash] Failed to recalculate budget: ${budgetErr.message}`);
           // Don't fail the expense creation if budget update fails
         }
       }
@@ -369,6 +490,7 @@ exports.getExpenses = async (req, res, next) => {
 
 /**
  * Get budget array for user
+ * Calculates spent dynamically from real expenses in database
  * GET /api/kash/budget
  */
 exports.getBudget = async (req, res, next) => {
@@ -379,11 +501,28 @@ exports.getBudget = async (req, res, next) => {
       return res.status(401).json({ success: false, message: 'Unauthorized' });
     }
 
-    const user = await User.findById(userId).select('budget').lean();
+    const [expenses, user] = await Promise.all([
+      Expense.find({ managerId: userId }).lean(),
+      User.findById(userId)
+    ]);
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
+
+    // Recalculate spent for each budget from real expenses
+    if (user.budget && Array.isArray(user.budget)) {
+      for (const budget of user.budget) {
+        budget.spent = expenses
+          .filter(e => e.category === budget.project)
+          .reduce((sum, e) => sum + (e.amount || 0), 0);
+      }
+      await user.save();
+    }
 
     return res.status(200).json({
       success: true,
-      data: { budget: user?.budget || [] },
+      data: { budget: user.budget || [] }
     });
   } catch (error) {
     next(error);
@@ -577,6 +716,33 @@ exports.markReminderPaid = async (req, res, next) => {
       success: true,
       message: 'Reminder marked as paid',
       data: { reminder },
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Recalculate budget spent by re-summing all expenses
+ * POST /api/kash/recalculate-budget
+ * Returns updated budget array
+ */
+exports.recalculateBudget = async (req, res, next) => {
+  try {
+    const userId = req.user?.id;
+
+    if (!userId) {
+      return res.status(401).json({ success: false, message: 'Unauthorized' });
+    }
+
+    const updatedUser = await recalculateBudgetSpent(userId);
+
+    return res.status(200).json({
+      success: true,
+      message: 'Budget spent recalculated successfully',
+      data: {
+        budget: updatedUser?.budget || [],
+      },
     });
   } catch (error) {
     next(error);

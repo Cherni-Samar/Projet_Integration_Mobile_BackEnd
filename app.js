@@ -13,6 +13,8 @@ const paymentRoutes = require('./routes/paymentRoutes');
 const errorHandler = require('./middleware/errorHandler');
 const staffingWatcher = require('./services/staffingWatcher');
 const kashRoutes = require('./routes/kashRoutes');
+const timoRoutes = require('./routes/timoRoutes');
+const dexoRoutes = require('./routes/dexoRoutes');
 
 // Import Kash Cron
 const { startKashCron, triggerDailyEmailNow, triggerWeeklyEmailNow } = require('./cron/kashCron');
@@ -46,6 +48,8 @@ app.use('/api/agents', agentRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/payment', paymentRoutes);
 app.use('/api/kash', kashRoutes);
+app.use('/api/timo', timoRoutes);
+app.use('/api/dexo', dexoRoutes);
 
 // ✅ KASH CRON TEST ROUTES
 app.get('/api/kash/test-daily', async (req, res) => {
@@ -71,7 +75,10 @@ app.use((req, res) => res.status(404).json({ success: false, message: "Route non
 app.use(errorHandler);
 app.use(cors()); 
 
-// 5. Démarrage du serveur
+// 5. Initialize Services
+require('./services/automatedBriefing');
+
+// 6. Démarrage du serveur
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`
