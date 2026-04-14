@@ -508,58 +508,10 @@ exports.saveDocument = async (req, res) => {
 };
 
 // ─────────────────────────────────────────────
-exports.getDocumentsByCategory = async (req, res) => {
-  try {
-    const { category } = req.params;
-    const { confidentialityLevel } = req.query;
 
-    const validCategories = ["Commercial", "Finance", "Juridique", "Marketing", "RH", "Technique"];
-    if (!validCategories.includes(category)) {
-      return res.status(400).json({
-        success: false,
-        error: `Catégorie invalide. Catégories valides: ${validCategories.join(', ')}`,
-      });
-    }
-
-
-    const result = await echoAgent.getDocumentsByCategory(category, confidentialityLevel);
-
-    res.json(result);
-  } catch (error) {
-    console.error("❌ Erreur route /documents/:category:", error);
-    res.status(500).json({
-      success: false,
-      error: "Erreur interne du serveur",
-      details: error.message,
-    });
-  }
-};
 
 // ─────────────────────────────────────────────
-exports.getDocumentContent = async (req, res) => {
-  try {
-    const { documentId } = req.params;
 
-    if (!documentId) {
-      return res.status(400).json({
-        success: false,
-        error: "L'ID du document est requis",
-      });
-    }
-
-
-    const result = await echoAgent.getDocumentContent(documentId);
-
-    res.json(result);
-  } catch (error) {
-    console.error("❌ Erreur route /document-content/:documentId:", error);
-    res.status(500).json({
-      success: false,
-      error: "Erreur interne du serveur",
-      details: error.message,
-    });
-  }
-};
 
 // ─────────────────────────────────────────────
 exports.extractAndSaveTasks = async (req, res) => {

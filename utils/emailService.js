@@ -530,10 +530,24 @@ const sendHeraConvocation = async (email, details) => {
   try {
     const transporter = createTransporter();
     
-    // Déterminer le bloc d'adresse ou de lien selon le mode
-    const locationInfo = details.mode === 'Remote' 
-      ? `<p style="margin: 10px 0;">🔗 <b>Lien Virtuel :</b> <a href="${details.meeting_link}" style="color: #CCFF00;">Rejoindre l'entretien (Jitsi)</a></p>`
-      : `<p style="margin: 10px 0;">📍 <b>Lieu :</b> Siège E-Team - 12 rue de l'IA, Paris</p>`;
+    // ✅ SÉCURITÉ : Si Remote mais pas de lien, on en crée un basé sur le nom
+    const finalLink = details.meeting_link || `https://meet.jit.si/ETeam_Meeting_${details.name.replace(/\s+/g, '_')}`;
+
+    // ✅ LOGIQUE DE BLOC : On prépare le HTML pour le lieu ou le lien
+    let locationHTML = "";
+    if (details.mode === 'Remote') {
+      locationHTML = `
+        <p style="margin: 10px 0; color: #ffffff;">🔗 <b>Lien:</b> 
+          <a href="${finalLink}" target="_blank" style="color: #CDFF00; text-decoration: underline; font-weight: bold;">
+            Cliquer ici pour rejoindre (Jitsi)
+          </a>
+        </p>`;
+    } else {
+      locationHTML = `
+        <p style="margin: 10px 0; color: #ffffff;">📍 <b>Lieu :</b> 
+          <span style="color: #CDFF00; font-weight: bold;">Siège E-Team - 12 rue de l'IA, Paris</span>
+        </p>`;
+    }
 
     const mailOptions = {
       from: `"Hera (E-Team RH)" <${process.env.EMAIL_USER}>`,
@@ -541,7 +555,6 @@ const sendHeraConvocation = async (email, details) => {
       subject: `✨ Confirmation de rendez-vous : ${details.type}`,
       html: `
         <div style="font-family: 'Inter', Arial, sans-serif; max-width: 600px; margin: auto; border-radius: 20px; overflow: hidden; background-color: #0A0A0A; color: #ffffff; border: 1px solid #333;">
-          
           <div style="padding: 40px; text-align: center; background: linear-gradient(180deg, #1a1a1a 0%, #0A0A0A 100%);">
             <div style="font-size: 28px; font-weight: bold; color: #CCFF00; letter-spacing: 2px;">E-TEAM</div>
             <p style="font-size: 12px; color: #888; margin-top: 5px; text-transform: uppercase;">Service des Ressources Humaines</p>
@@ -550,21 +563,21 @@ const sendHeraConvocation = async (email, details) => {
           <div style="padding: 40px; background-color: #ffffff; color: #1a1a1a;">
             <h2 style="margin-top: 0; font-size: 20px;">Bonjour ${details.name},</h2>
             <p style="font-size: 15px; line-height: 1.6; color: #444;">
-              Votre demande de <b>${details.type}</b> a été traitée. Nous avons le plaisir de vous confirmer votre rendez-vous :
+              Votre demande de <b>${details.type}</b> a été traitée. Voici les détails de votre rendez-vous :
             </p>
 
             <div style="background-color: #0A0A0A; color: #ffffff; padding: 25px; border-radius: 15px; margin: 30px 0; border-left: 6px solid #CCFF00;">
               <p style="margin: 0 0 10px 0; font-size: 12px; text-transform: uppercase; color: #CCFF00; font-weight: bold; letter-spacing: 1px;">Détails du créneau</p>
               <p style="margin: 0; font-size: 18px; font-weight: bold;">${details.date}</p>
-              <div style="margin-top: 15px; font-size: 14px; color: #bbb;">
-                ${locationInfo}
+              <div style="margin-top: 15px; font-size: 14px;">
+                ${locationHTML} <!-- ✅ Insertion propre du lien ou de l'adresse -->
               </div>
             </div>
 
             <p style="font-size: 14px; line-height: 1.6; color: #666;">
               ${details.mode === 'Remote' 
-                ? "Il vous suffit de cliquer sur le lien ci-dessus au moment du rendez-vous. Assurez-vous que votre caméra et micro sont fonctionnels." 
-                : "Merci de vous présenter à l'accueil 5 minutes avant l'heure prévue muni d'une pièce d'identité."}
+                ? "Il vous suffit de cliquer sur le lien jaune ci-dessus au moment du rendez-vous." 
+                : "Merci de vous présenter à l'accueil muni d'une pièce d'identité."}
             </p>
 
             <div style="margin-top: 40px;">
@@ -572,22 +585,13 @@ const sendHeraConvocation = async (email, details) => {
               <p style="margin-top: 5px; font-size: 12px; color: #888;">Votre Responsable RH Digitale</p>
             </div>
           </div>
-
-          <div style="background-color: #111; padding: 20px; text-align: center; border-top: 1px solid #222;">
-            <p style="margin: 0; color: #555; font-size: 10px;">© 2026 E-Team Intelligence • Document généré automatiquement</p>
-          </div>
         </div>`
     };
 
     await transporter.sendMail(mailOptions);
-    console.log(`📧 HERA : Convocation ${details.mode} envoyée avec succès à ${email}`);
     return true;
-  } catch (e) { 
-    console.error("❌ Erreur mail Hera Convocation:", e.message);
-    return false; 
-  }
+  } catch (e) { return false; }
 };
-
 
 // ✅ AJOUTE CETTE FONCTION TOUT EN BAS DE utils/emailService.js
 // ✅ 1. Définition de la fonction comme une constante (comme les autres)

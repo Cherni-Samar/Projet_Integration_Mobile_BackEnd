@@ -275,33 +275,88 @@ exports.processCandidacy = async (req, res) => {
 
 exports.hireCandidate = async (req, res) => {
   try {
-    const candidate = await Candidate.findById(req.params.id);
+    const candidateId = req.params.id;
+    const candidate = await Candidate.findById(candidateId);
+
     if (!candidate) return res.status(404).json({ message: "Candidat non trouvé" });
 
-    // 1. Créer l'employé
+    // 1. Création du profil Employé
     const newEmployee = await Employee.create({
-       name: candidate.name, 
-       email: candidate.email, 
-       department: candidate.department || "Tech",
-       status: 'active' 
+      name: candidate.name,
+      email: candidate.email,
+      status: 'active',
+      role: "Collaborateur",
+      department: candidate.department || "Tech",
+      leave_balance: { annual: 25, sick: 10, urgent: 3 }
     });
 
-    // 2. ✅ REQUÊTE À TIMO pour le planning d'Onboarding
-    const InboxEmail = require('../models/InboxEmail');
-    await InboxEmail.create({
-      subject: `📅 REQUÊTE PLANNING : Onboarding ${newEmployee.name}`,
-      sender: "hera@e-team.com",
-      to: "timo@e-team.com",
-      content: `Salut Timo, on a recruté ${newEmployee.name}. Peux-tu planifier sa session d'intégration (Discovery Session) ?`,
-      priority: 'medium'
+    // --- 🤖 LOGIQUE ANTI-DOUBLON DE TIMO (Utilise ton modèle 'Task') ---
+    let suggestedDate = new Date();
+    // On commence les RDV à partir de demain à 14:00
+    suggestedDate.setDate(suggestedDate.getDate() + 1);
+    suggestedDate.setHours(14, 0, 0, 0);
+
+    let isSlotOccupied = true;
+    
+    while (isSlotOccupied) {
+      // On vérifie si une tâche de type 'meeting' existe déjà à cette 'deadline'
+      const conflict = await Task.findOne({ 
+        deadline: suggestedDate,
+        category: 'meeting'
+      });
+
+      if (conflict) {
+        // Si occupé, on décale de 1 heure
+        console.log(`⚠️ Slot ${suggestedDate.toLocaleString()} occupé par "${conflict.title}", décalage...`);
+        suggestedDate.setHours(suggestedDate.getHours() + 1);
+
+        // Si on dépasse 17h, on passe au lendemain 14h
+        if (suggestedDate.getHours() >= 17) {
+          suggestedDate.setDate(suggestedDate.getDate() + 1);
+          suggestedDate.setHours(14, 0, 0, 0);
+        }
+      } else {
+        // Le créneau est libre !
+        isSlotOccupied = false;
+      }
+    }
+
+    // 2. Création de la tâche pour Timo (Blocage du calendrier)
+    await Task.create({
+      title: `Onboarding : ${newEmployee.name}`,
+      description: `Session d'intégration officielle pour le nouveau collaborateur ${newEmployee.name}.`,
+      deadline: suggestedDate, // ✅ Utilise ton champ 'deadline'
+      category: 'meeting',
+      priority: 'high',
+      status: 'todo',
+      userId: 'current_user' // Valeur par défaut de ton modèle
     });
 
-    // 3. Envoyer le mail au candidat (inchangé)
-    await Candidate.findByIdAndDelete(req.params.id);
-    res.json({ success: true, message: "Embauche réussie. Timo a été notifié pour le planning." });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+    // 3. ✅ Envoi de la notification mail par Hera
+    const formattedDate = suggestedDate.toLocaleString('fr-FR', {
+      weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit'
+    });
+
+    await mailService.sendGroupMeetingInvitation(candidate.email, {
+      name: candidate.name,
+      interview_date: formattedDate,
+      meeting_link: "https://meet.jit.si/ETeam_Discovery_Session"
+    });
+
+    // 4. On retire le candidat de la liste
+    await Candidate.findByIdAndDelete(candidateId);
+
+    res.json({ 
+      success: true, 
+      message: "Embauche réussie. Timo a planifié le RDV.",
+      plannedDate: formattedDate 
+    });
+
+  } catch (err) {
+    console.error("❌ Erreur hireCandidate:", err);
+    res.status(500).json({ error: err.message });
+  }
 };
-
 // ── 2. GÉNÉRATION DE DOCUMENTS (CONTRAT / ATTESTATION) ────────────────────
 exports.generateDocument = async (req, res) => {
   try {
@@ -752,43 +807,106 @@ exports.getRecentActions = async (req, res) => {
 };
 // ── NOUVELLE FONCTION : TRAITER LA DÉMISSION (OFF-BOARDING) ──
 exports.processResignation = async (req, res) => {
-   try {
-    const { email, resignation_letter, meeting_mode } = req.body;
+  try {
+    const { email } = req.body;
     const employee = await Employee.findOne({ email: email.toLowerCase().trim() });
     
     if (!employee) return res.status(404).json({ success: false, message: "Employé non trouvé" });
 
-    // 1. Demander la date à Timo
-    const planning = await timo.autoPlanMeeting(employee.name, "Départ");
+    // ✅ APPEL À TIMO (Attendre l'objet de retour)
+   const planning = await timo.autoPlanMeeting(employee.name, "Démission");
 
-    // 2. Générer le lien Jitsi si c'est Remote
-    const jitsiLink = meeting_mode === 'Remote' 
-      ? `https://meet.jit.si/ETeam_Exit_${employee.name.replace(/\s+/g, '_')}`
-      : null;
+await mailService.sendHeraConvocation(employee.email, {
+    name: employee.name,
+    date: planning.date,
+    type: "Entretien de départ",
+    mode: "Remote", // Ou "On-site"
+    meeting_link: `https://meet.jit.si/ETeam_Exit_${employee.name.replace(/\s+/g, '_')}` // ✅ ICI ON CRÉE LE LIEN
+});
 
-    // 2. 📧 HERA ENVOIE LE MAIL FINAL
-    // Maintenant qu'Hera a la date de Timo, c'est ELLE qui envoie le mail de confirmation
-  await mailService.sendHeraConvocation(employee.email, {
-      name: employee.name,
-      date: planning.date,
-      mode: meeting_mode,
-      type: "Entretien de départ",
-      meeting_link: jitsiLink // On passe le lien
-    });
-
-    // 3. LOGUER L'ACTION
-    await HeraAction.create({
-      employee_id: employee._id,
-      action_type: 'offboarding_started',
-     details: { message: `Rendez-vous de sortie fixé au ${planning.date}` },
-      triggered_by: 'employee'
-    });
-
-      res.json({ success: true, message: `Rendez-vous fixé au ${planning.date}` });
-
+    res.json({ success: true, message: `Rendez-vous fixé au ${planning.date}` });
 
   } catch (err) {
+    console.error("🔥 CRASH BACKEND:", err.message); // Regarde ton terminal Node !
     res.status(500).json({ error: err.message });
+  }
+};
+
+// controllers/heraController.js
+
+exports.getAgentInteractions = async (req, res) => {
+  try {
+    // 1. On récupère les 10 derniers logs bruts de la base de données
+    const rawLogs = await HeraAction.find()
+      .sort({ created_at: -1 })
+      .limit(10)
+      .populate('employee_id', 'name');
+
+    // 2. On prépare un prompt pour que l'IA interprète ces logs
+    const prompt = `
+      Tu es Dexo, le Superviseur de l'écosystème E-Team. 
+      Analyse ces logs système et transforme-les en un tableau JSON d'interactions entre agents.
+      
+      LOGS À ANALYSER :
+      ${JSON.stringify(rawLogs)}
+
+      RÈGLES STRICTES :
+      - Tu dois identifier l'émetteur (sender) et le récepteur (receiver) parmi : hera, echo, timo, dexo, kash.
+      - Pour une 'doc_request', le sender est 'dexo' et le receiver est 'hera'.
+      - Pour une 'absence_alert', le sender est 'hera' et le receiver est 'echo'.
+      - Pour une 'offboarding_started', le sender est 'hera' et le receiver est 'timo'.
+      - 'summary' doit être une phrase technique et pro.
+      - 'status' doit être 'success' ou 'encrypted'.
+
+      FORMAT DE RÉPONSE (JSON UNIQUEMENT) :
+      {
+        "interactions": [
+          { "id": "ID_DU_LOG", "sender": "nom", "receiver": "nom", "actionType": "type", "summary": "phrase", "timestamp": "ISO_DATE", "status": "success" }
+        ]
+      }
+    `;
+
+    // 3. Appel à l'IA pour interpréter les logs
+    const aiResponse = await heraAgent.llm.invoke(prompt);
+    
+    // On nettoie la réponse pour être sûr d'avoir du JSON pur
+    const cleanJson = aiResponse.content.match(/\{.*\}/s)[0];
+    const parsedData = JSON.parse(cleanJson);
+
+    res.json({ success: true, ...parsedData });
+
+  } catch (err) {
+    console.error("❌ Erreur IA Logs:", err.message);
+    res.status(500).json({ success: false, error: "L'IA n'a pas pu interpréter les logs." });
+  }
+};
+// controllers/heraController.js
+
+exports.getAgentInteractionStats = async (req, res) => {
+  try {
+    // 1. On compte le total des interactions (logs HeraAction)
+    const total = await HeraAction.countDocuments();
+
+    // 2. On compte les échanges "Encrypted" (tous les doc_request qui ont un hash)
+    const encrypted = await HeraAction.countDocuments({ action_type: 'doc_request' });
+
+    // 3. On compte les succès (on considère les alertes staffing et offboarding comme succès immédiat)
+    const successful = await HeraAction.countDocuments({ 
+      action_type: { $in: ['absence_alert', 'offboarding_started'] } 
+    }) + encrypted;
+
+    res.json({
+      success: true,
+      stats: {
+        total: total,
+        successful: successful,
+        encrypted: encrypted,
+        pending: 0,
+        failed: 0
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
   }
 };
 exports.getAllActions = (req, res) => res.json({ success: true, actions: [] });

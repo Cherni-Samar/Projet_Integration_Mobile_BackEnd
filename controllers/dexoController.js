@@ -165,49 +165,22 @@ exports.requestDocument = async (req, res) => {
 
 exports.getDocumentActions = async (req, res) => {
   const { limit = 20 } = req.query;
-
   try {
-    // Récupérer les actions de type 'doc_request' avec les infos de l'employé
     const actions = await HeraAction.find({ action_type: 'doc_request' })
-      .populate('employee_id', 'name email') // Récupère le nom et email de l'employé
-      .sort({ created_at: -1 }) // Plus récent en premier
+      .populate('employee_id', 'name email')
+      .sort({ created_at: -1 })
       .limit(parseInt(limit));
 
-    // Formater les données pour le frontend
-    const formattedActions = actions.map(action => {
-      const details = action.details || {};
-      
-      return {
-        _id: action._id,
-        employee_name: action.employee_id?.name || 'Employé inconnu',
-        employee_email: action.employee_id?.email || '',
-        action_type: action.action_type,
-        category: details.category || 'general',
-        details: {
-          document: details.document || 'Document',
-          category: details.category || 'general',
-          db_id: details.db_id,
-          reason: details.reason, // Pour les attestations
-          month: details.month,   // Pour les bulletins
-          year: details.year,     // Pour les bulletins
-        },
-        created_at: action.created_at,
-        createdAt: action.created_at, // Alias pour compatibilité
-      };
-    });
+    const formattedActions = actions.map(action => ({
+      _id: action._id,
+      employee_name: action.employee_id?.name || 'Employé inconnu',
+      details: action.details,
+      created_at: action.created_at
+    }));
 
-    res.json({
-      success: true,
-      count: formattedActions.length,
-      actions: formattedActions,
-    });
-
+    res.json({ success: true, actions: formattedActions });
   } catch (err) {
-    console.error('❌ Erreur getDocumentActions:', err.message);
-    res.status(500).json({
-      success: false,
-      error: err.message,
-    });
+    res.status(500).json({ success: false, error: err.message });
   }
 };
 
