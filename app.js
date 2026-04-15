@@ -19,7 +19,6 @@ app.use(express.urlencoded({ extended: true }));
 const employeeAuthRoutes = require('./routes/employeeAuth');
 const echoRoutes = require('./routes/echoRoutes');
 const authRoutes = require('./routes/authRoutes');
-const employeeAuthRoutes = require('./routes/employeeAuth');
 const heraRoutes = require('./routes/heraRoutes');
 const emailRoutes = require('./routes/emailRoutes');
 const agentRoutes = require('./routes/agentRoutes');
@@ -33,8 +32,6 @@ const { startEchoSocialMediaAutonomy } = require('./services/echoLinkedInAutonom
 const { startKashCron, triggerDailyEmailNow, triggerWeeklyEmailNow } = require('./cron/kashCron');
 require('./services/automatedBriefing');
 
-const app = express();
-
 // 1. Connexion MongoDB
 mongoose.connect(process.env.MONGODB_URI)
   .then(() => console.log('✅ MongoDB Connected'))
@@ -42,11 +39,6 @@ mongoose.connect(process.env.MONGODB_URI)
     console.error('❌ MongoDB Error:', err.message);
     process.exit(1);
   });
-
-// 2. Middlewares de base
-app.use(cors({ origin: '*', credentials: true }));
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true }));
 
 // -------------------------------------------------------------------------
 // ✅ CONFIGURATION DES FICHIERS STATIQUES ET DU FORMULAIRE
@@ -75,7 +67,6 @@ app.use('/api/emails', emailRoutes);
 app.use('/api/agents', agentRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/payment', paymentRoutes);
-app.use('/api/employees', employeeAuthRoutes);
 app.use('/api/echo', echoRoutes);
 app.use('/api/kash', kashRoutes);      
 
