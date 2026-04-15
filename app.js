@@ -3,8 +3,20 @@ const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
 
+// 1. Initialize App First
+const app = express();
+
+// 2. Middlewares (CORS & Body Parsers)
+app.use(cors({
+  origin: 'http://localhost:4200',
+  credentials: true
+}));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true }));
+
 // Import des Routes
 const authRoutes = require('./routes/authRoutes');
+const employeeAuthRoutes = require('./routes/employeeAuth');
 const heraRoutes = require('./routes/heraRoutes');
 const emailRoutes = require('./routes/emailRoutes');
 const agentRoutes = require('./routes/agentRoutes');
@@ -22,9 +34,7 @@ const { startKashCron, triggerDailyEmailNow, triggerWeeklyEmailNow } = require('
 // Démarrer la surveillance autonome
 staffingWatcher.watchStaffing();
 
-const app = express();
-
-// 1. Connexion MongoDB (Obligatoire)
+// 3. Connexion MongoDB
 mongoose.connect(process.env.MONGODB_URI)
   .then(() => console.log('✅ MongoDB Connected'))
   .catch((err) => {
@@ -32,17 +42,17 @@ mongoose.connect(process.env.MONGODB_URI)
     process.exit(1);
   });
 
-// 2. Middlewares de base
-app.use(cors({ origin: '*', credentials: true }));
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true }));
-
-// 3. Routes API
+// 4. Routes API
 app.get('/', (req, res) => res.json({ status: 'running', service: 'Hera Assistant API' }));
 app.get('/health', (req, res) => res.json({ status: 'OK', db: mongoose.connection.readyState === 1 }));
 
+// ✅ Auth routes (User registration & login)
 app.use('/api/auth', authRoutes);
-app.use('/api/hera', heraRoutes);    // Route cruciale pour Vapi
+
+// ✅ Employee Auth routes (Employee portal login)
+app.use('/api/employees', employeeAuthRoutes); 
+
+app.use('/api/hera', heraRoutes);
 app.use('/api/emails', emailRoutes);
 app.use('/api/agents', agentRoutes);
 app.use('/api/messages', messageRoutes);
@@ -70,12 +80,10 @@ app.get('/api/kash/test-weekly', async (req, res) => {
   }
 });
 
-// 4. Gestion des erreurs (404 & Global)
+// 5. Error Handling & Extra Services
 app.use((req, res) => res.status(404).json({ success: false, message: "Route non trouvée" }));
 app.use(errorHandler);
-app.use(cors()); 
 
-// 5. Initialize Services
 require('./services/automatedBriefing');
 
 // 6. Démarrage du serveur
@@ -87,7 +95,7 @@ app.listen(PORT, '0.0.0.0', () => {
 🤖 Mode: ${process.env.NODE_ENV || 'production'}
   `);
 
-  // 6. Start Kash Cron Job
+  // Start Kash Cron Job
   startKashCron();
 });
 

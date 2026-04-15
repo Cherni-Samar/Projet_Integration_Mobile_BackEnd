@@ -5,12 +5,26 @@ const path = require('path');
 const fs = require('fs');
 const dexoController = require('../controllers/dexoController');
 
-// 1. Configuration (Remplace par ton NOUVEAU token si tu l'as changé)
-const token = process.env.TELEGRAM_BOT_TOKEN || '8667434515:AAE6lfzLQc-30QGU4RKT-nKR0EVdARjoP-E'; 
-const bot = new TelegramBot(token, { polling: true });
-const chatId = process.env.TELEGRAM_CHAT_ID || '8680134191'; 
+// 1. Configuration - Disable bot if token is not configured
+const token = process.env.TELEGRAM_BOT_TOKEN;
+const chatId = process.env.TELEGRAM_CHAT_ID || '8680134191';
+
+// Only initialize bot if token is configured
+let bot = null;
+if (token) {
+  bot = new TelegramBot(token, { polling: false }); // polling: false to prevent 401 spam
+  console.log('✅ Telegram bot initialized with polling disabled');
+} else {
+  console.warn('⚠️ TELEGRAM_BOT_TOKEN not configured. Telegram briefing disabled. Set TELEGRAM_BOT_TOKEN in .env to enable.');
+} 
 
 const runAutomatedVocalBriefing = async () => {
+    // Skip if bot is not initialized
+    if (!bot) {
+        console.warn('⚠️ Telegram bot not initialized. Skipping briefing.');
+        return;
+    }
+
     console.log("🕒 [DEXO] Déclenchement du rapport...");
 
     try {
