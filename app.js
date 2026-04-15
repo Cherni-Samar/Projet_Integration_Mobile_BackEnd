@@ -1,30 +1,29 @@
 require('dotenv').config();
 const express = require('express');
+const path = require('path'); // ✅ AJOUTÉ pour gérer les chemins de fichiers
 const cors = require('cors');
 const mongoose = require('mongoose');
 
 // Import des Routes
+const employeeAuthRoutes = require('./routes/employeeAuth');
+const echoRoutes = require('./routes/echoRoutes');
 const authRoutes = require('./routes/authRoutes');
 const heraRoutes = require('./routes/heraRoutes');
 const emailRoutes = require('./routes/emailRoutes');
 const agentRoutes = require('./routes/agentRoutes');
 const messageRoutes = require('./routes/messageRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
+const kashRoutes = require('./routes/kashRoutes');
+
 const errorHandler = require('./middleware/errorHandler');
 const staffingWatcher = require('./services/staffingWatcher');
-const kashRoutes = require('./routes/kashRoutes');
-const timoRoutes = require('./routes/timoRoutes');
-const dexoRoutes = require('./routes/dexoRoutes');
-
-// Import Kash Cron
+const { startEchoSocialMediaAutonomy } = require('./services/echoLinkedInAutonomy');
 const { startKashCron, triggerDailyEmailNow, triggerWeeklyEmailNow } = require('./cron/kashCron');
-
-// Démarrer la surveillance autonome
-staffingWatcher.watchStaffing();
+require('./services/automatedBriefing');
 
 const app = express();
 
-// 1. Connexion MongoDB (Obligatoire)
+// 1. Connexion MongoDB
 mongoose.connect(process.env.MONGODB_URI)
   .then(() => console.log('✅ MongoDB Connected'))
   .catch((err) => {
@@ -37,57 +36,60 @@ app.use(cors({ origin: '*', credentials: true }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
 
+// -------------------------------------------------------------------------
+// ✅ CONFIGURATION DES FICHIERS STATIQUES ET DU FORMULAIRE
+// -------------------------------------------------------------------------
+// Déclarer le dossier "public" (là où tu dois mettre ton form.html)
+app.use(express.static(path.join(__dirname, 'public')));
+
+// Route pour afficher le formulaire de candidature
+const formHtmlPath = path.join(__dirname, 'public', 'form.html');
+app.get('/form', (req, res) => res.sendFile(formHtmlPath));
+app.get('/candidature', (req, res) => res.sendFile(formHtmlPath));
+// -------------------------------------------------------------------------
+
 // 3. Routes API
 app.get('/', (req, res) => res.json({ status: 'running', service: 'Hera Assistant API' }));
 app.get('/health', (req, res) => res.json({ status: 'OK', db: mongoose.connection.readyState === 1 }));
 
 app.use('/api/auth', authRoutes);
-app.use('/api/hera', heraRoutes);    // Route cruciale pour Vapi
+app.use('/api/hera', heraRoutes);
 app.use('/api/emails', emailRoutes);
 app.use('/api/agents', agentRoutes);
 app.use('/api/messages', messageRoutes);
 app.use('/api/payment', paymentRoutes);
-app.use('/api/kash', kashRoutes);
-app.use('/api/timo', timoRoutes);
-app.use('/api/dexo', dexoRoutes);
+app.use('/api/employees', employeeAuthRoutes);
+app.use('/api/echo', echoRoutes);
+app.use('/api/kash', kashRoutes);      
 
-// ✅ KASH CRON TEST ROUTES
+// ✅ KASH TEST ROUTES
 app.get('/api/kash/test-daily', async (req, res) => {
-  try {
-    await triggerDailyEmailNow();
-    res.json({ success: true, message: 'Daily email triggered' });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
+  await triggerDailyEmailNow();
+  res.json({ success: true, message: 'Daily email triggered' });
 });
-
 app.get('/api/kash/test-weekly', async (req, res) => {
-  try {
-    await triggerWeeklyEmailNow();
-    res.json({ success: true, message: 'Weekly email triggered' });
-  } catch (error) {
-    res.status(500).json({ success: false, message: error.message });
-  }
+  await triggerWeeklyEmailNow();
+  res.json({ success: true, message: 'Weekly email triggered' });
 });
 
-// 4. Gestion des erreurs (404 & Global)
+// 4. Gestion des erreurs (DOIT ÊTRE APRÈS LES ROUTES)
 app.use((req, res) => res.status(404).json({ success: false, message: "Route non trouvée" }));
 app.use(errorHandler);
-app.use(cors()); 
 
-// 5. Initialize Services
-require('./services/automatedBriefing');
-
-// 6. Démarrage du serveur
+// 5. Démarrage du serveur et des Watchers
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`
 🚀 Serveur lancé sur le port ${PORT}
 📍 URL: http://localhost:${PORT}
-🤖 Mode: ${process.env.NODE_ENV || 'production'}
+📋 Formulaire candidature : http://localhost:${PORT}/form
+🤖 Mode: ${process.env.NODE_ENV || 'development'}
   `);
 
-  // 6. Start Kash Cron Job
+  // Lancer les surveillances autonomes après le démarrage
+  staffingWatcher.watchStaffing();
+  startEchoSocialMediaAutonomy();
+  // Lancer les cron jobs Kash
   startKashCron();
 });
 

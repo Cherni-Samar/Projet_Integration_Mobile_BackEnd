@@ -6,8 +6,14 @@ const mailService = require('../utils/emailService'); // Chemin corrigé selon t
 const heraAgent = require('../services/hera.agent'); // Ton service LangChain
 const JobOffer = require('../models/JobOffer');
 const Candidate = require('../models/Candidate');
-const mongoose = require('mongoose'); // ✅ AJOUTE CETTE LIGNE TOUT EN HAUT
-// 💡 DÉFINITION DES LIMITES (Indispensable pour check-staffing)
+const dexo = require('../controllers/dexoController'); 
+const InboxEmail = require('../models/InboxEmail'); // ✅ AJOUTE CETTE LIGNE// ✅ AJOUTE CECI
+const mongoose = require('mongoose');
+const timo = require('./timoController');           // ✅ OBLIGATOIRE pour l'appel autonome
+const bcrypt = require('bcryptjs');
+const Document = require('../models/Document'); // ✅ AJOUTE CET IMPORT
+ // ✅ Assure-toi d'avoir installé : npm install bcryptjs
+ // ✅ AJOUTE CETTE LIGNE TOUT EN HAUT
 const DEPARTMENT_LIMITS = {
   Tech: { max_employees: 20, max_interns: 2 },
   Design: { max_employees: 10, max_interns: 1 },
@@ -101,75 +107,130 @@ exports.vapiWebhook = async (req, res) => {
     res.json({ result: "Désolée, j'ai rencontré une erreur technique." });
   }
 };
+exports.getAllCandidates = async (req, res) => {
+  try {
+    const candidates = await Candidate.find().sort({ score_ia: -1 });
+    res.json({ success: true, candidates });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+};
+
 // ── FONCTION : CHECK STAFFING (Alerte Echo) ──
 exports.checkStaffingNeeds = async (req, res) => {
   try {
     const report = [];
     const departments = Object.keys(DEPARTMENT_LIMITS);
-    
-    // On définit la date limite (7 jours en arrière)
-    const oneWeekAgo = new Date();
-    oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+    const InboxEmail = require('../models/InboxEmail');
+    const EmailReply = require('../models/EmailReply');
+    const Candidate = require('../models/Candidate'); // Pour vérifier les nouveaux candidats
+
+    // Date de référence : il y a 7 jours
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
     for (const dept of departments) {
       const count = await Employee.countDocuments({ department: dept, status: 'active' });
       const limit = DEPARTMENT_LIMITS[dept].max_employees;
 
+      // CONDITION 1 : Sous-effectif détecté (< 80%)
       if (count < limit * 0.8) {
-        // 1. Chercher si une alerte a été envoyée durant les 7 derniers jours
-        const lastAlert = await HeraAction.findOne({
+        
+        // CONDITION 2 : Existe-t-il une alerte envoyée DURANT LES 7 DERNIERS JOURS ?
+        const recentAlert = await HeraAction.findOne({
           action_type: 'absence_alert',
           'details.department': dept,
-          created_at: { $gte: oneWeekAgo }
+          created_at: { $gt: sevenDaysAgo } // Plus récent que 7 jours
         }).sort({ created_at: -1 });
 
-        let shouldNotify = false;
+        if (recentAlert) {
+          report.push({ 
+            dept, 
+            status: 'WAITING', 
+            reason: "Une alerte a déjà été envoyée cette semaine. On attend les résultats." 
+          });
+          continue; // On passe au département suivant sans rien envoyer
+        }
 
-        if (!lastAlert) {
-          // Cas A : Aucune alerte envoyée depuis 7 jours
-          shouldNotify = true;
-        } else {
-          // Cas B : Une alerte a été envoyée, on vérifie si Echo a répondu
-          // On cherche un message d'Echo reçu APRÈS la date de l'alerte
+        // CONDITION 3 : Si une vieille alerte existe, on vérifie si Echo a répondu 
+        // ET si des candidats ont postulé entre-temps
+        const lastAlertEver = await HeraAction.findOne({
+          action_type: 'absence_alert',
+          'details.department': dept
+        }).sort({ created_at: -1 });
+
+        if (lastAlertEver) {
+          // A-t-on reçu des candidats pour ce département depuis la dernière alerte ?
+          const newCandidates = await Candidate.countDocuments({
+            department: dept,
+            created_at: { $gt: lastAlertEver.created_at }
+          });
+
+          if (newCandidates > 0) {
+            report.push({ 
+              dept, 
+              status: 'OK', 
+              reason: `${newCandidates} nouveaux candidats ont postulé. Recrutement efficace, pas de relance.` 
+            });
+            continue;
+          }
+
+          // Echo a-t-il déjà répondu par un mail de confirmation ?
           const echoResponse = await InboxEmail.findOne({
             sender: "echo@e-team.com",
             to: "hera@e-team.com",
-            content: new RegExp(dept, 'i'), // Echo mentionne le département dans sa réponse
-            receivedAt: { $gt: lastAlert.created_at }
+            receivedAt: { $gt: lastAlertEver.created_at }
           });
 
-          if (!echoResponse) {
-            // Echo n'a pas encore répondu à l'alerte de la semaine
-            console.log(`⚠️ Echo n'a pas encore répondu pour ${dept}. Relance autorisée après 7 jours.`);
-            // Si l'alerte date de plus de 7 jours (géré par le findOne $gte), on relancera
-            // Ici, si lastAlert existe, on ne fait rien car elle a moins de 7 jours
-            shouldNotify = false; 
-          } else {
-            console.log(`✅ Echo a déjà confirmé le traitement pour ${dept}.`);
-            shouldNotify = false;
+          if (echoResponse) {
+             // Echo a répondu mais pas de candidats après 7 jours ? 
+             // Là on pourrait relancer, mais selon ta règle on attend encore.
+             report.push({ dept, status: 'WAITING', reason: "Echo a publié, on attend que les candidats remplissent le formulaire." });
+             continue;
           }
         }
 
-        if (shouldNotify) {
-          console.log(`📢 Envoi d'une alerte hebdomadaire à Echo pour le département ${dept}`);
-          
-          await mailService.sendStaffingAlert("echo-agent@e-team.com", {
-            department: dept,
-            count,
-            max: limit,
-            message: `Hera ici. Rappel hebdomadaire : le département ${dept} a besoin de renforts.`
-          });
+        // SI ON ARRIVE ICI : Soit c'est la 1ère fois, soit ça fait + de 7 jours sans résultats
+        console.log(`📢 [HERA] Alerte Staffing hebdomadaire pour : ${dept}`);
+        
+        // 1. Création du mail technique pour Echo
+        const newAlertMail = await InboxEmail.create({
+          sender: "hera@e-team.com",
+          to: "echo@e-team.com",
+          subject: `[STAFFING WEEKLY] Besoin renfort : ${dept}`,
+          content: `Alerte hebdomadaire : Le département ${dept} est à ${count}/${limit}.`,
+          category: 'recrutement',
+          priority: 'high'
+        });
 
-          await HeraAction.create({
-            action_type: 'absence_alert',
-            details: { department: dept, count, limit, note: "Alerte Hebdomadaire" },
-            triggered_by: 'hera_auto'
+        // 2. Appel API Echo
+        try {
+          await fetch('http://localhost:3000/api/echo/receive-staffing-alert', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              emailId: newAlertMail._id,
+              department: dept,
+              currentCount: count,
+              maxCapacity: limit
+            })
           });
+        } catch (e) { console.warn("Echo inaccessible"); }
 
-          report.push({ dept, status: 'Alerte envoyée' });
-        } else {
-          report.push({ dept, status: 'Sous surveillance (pas d\'envoi)' });
-        }
+        // 3. Log de l'action dans HeraAction (C'est ce log qui bloque les alertes pendant 7 jours)
+        await HeraAction.create({
+          action_type: 'absence_alert',
+          details: { 
+            department: dept, 
+            email_id: newAlertMail._id, 
+            count: count,
+            limit: limit
+          },
+          triggered_by: 'hera_auto'
+        });
+
+        report.push({ dept, status: 'SENT', reason: "Alerte hebdomadaire envoyée à Echo." });
+
+      } else {
+        report.push({ dept, status: 'OK', reason: "Effectif suffisant." });
       }
     }
     res.json({ success: true, report });
@@ -177,49 +238,122 @@ exports.checkStaffingNeeds = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
-
 // --- Garde ta fonction getNextSessionDate() que nous avons écrite avant ---
 
 exports.processCandidacy = async (req, res) => {
   try {
-    const { name, email, resume_text } = req.body;
+   const { name, email, resume_text, department } = req.body;
+    
+    // ✅ On récupère le fichier envoyé
+    const resume_url = req.file ? req.file.path : null; 
 
-    const analysis = await heraAgent.analyzeCandidate(resume_text, "Futur talent E-Team");
-    const score = analysis.score || 0;
-
-    let status = 'applied';
-    let meeting_link = null;
-    let interview_date = null;
-
-    if (score > 70) {
-      status = 'interview_scheduled';
-      meeting_link = `https://meet.jit.si/ETeam_Discovery_Session_${Math.floor(Math.random()*1000)}`;
+    // Logic IA (Inchangée)
+    const analysis = await heraAgent.analyzeCandidate(resume_text, department);
+    const score = Number(analysis.score) || 0;
+    if (score > 80) {
+      // ✅ REMPLACE PAR CE NOM (Étape 1 : Entretien individuel)
+      await mailService.sendInterviewInvitation(email, name); 
       
-      // On calcule la date du prochain vendredi à 14h
-      const dateObj = getNextSessionDate();
-      const formattedDate = dateObj.toLocaleDateString('fr-FR', {
-        weekday: 'long', day: 'numeric', month: 'long', year: 'numeric', hour: '2-digit', minute: '2-digit'
-      });
-
-      // ✅ ON ENVOIE L'INVITATION PROFESSIONNELLE
-      await mailService.sendCandidacyInvitation(email, {
-        name,
-        meeting_link,
-        interview_date: formattedDate // On passe la date ici
-      });
-    } else {
+  await Candidate.create({
+      name,
+      email,
+      department,
+      resume_text,
+      resume_url, // 👈 Le chemin vers le PDF est stocké ici
+      status: score >= 80 ? 'interview_scheduled' : 'applied',
+      score_ia: score
+    });
+      } else {
       await mailService.sendCandidacyConfirmation(email, name);
+      await Candidate.create({ name, email, status: 'applied', score_ia: score, resume_text });
     }
+    res.json({ success: true, score });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
 
-    // Sauvegarde MongoDB
-    await Candidate.create({
-      name, email, status, score_ia: score, 
-      meeting_link, interview_date: getNextSessionDate(), resume_text
+exports.hireCandidate = async (req, res) => {
+  try {
+    const candidateId = req.params.id;
+    const candidate = await Candidate.findById(candidateId);
+
+    if (!candidate) return res.status(404).json({ message: "Candidat non trouvé" });
+
+    // 1. Création du profil Employé
+    const newEmployee = await Employee.create({
+      name: candidate.name,
+      email: candidate.email,
+      status: 'active',
+      role: "Collaborateur",
+      department: candidate.department || "Tech",
+      leave_balance: { annual: 25, sick: 10, urgent: 3 }
     });
 
-    res.json({ success: true, message: "Demande traitée avec succès" });
+    // --- 🤖 LOGIQUE ANTI-DOUBLON DE TIMO (Utilise ton modèle 'Task') ---
+    let suggestedDate = new Date();
+    // On commence les RDV à partir de demain à 14:00
+    suggestedDate.setDate(suggestedDate.getDate() + 1);
+    suggestedDate.setHours(14, 0, 0, 0);
+
+    let isSlotOccupied = true;
+    
+    while (isSlotOccupied) {
+      // On vérifie si une tâche de type 'meeting' existe déjà à cette 'deadline'
+      const conflict = await Task.findOne({ 
+        deadline: suggestedDate,
+        category: 'meeting'
+      });
+
+      if (conflict) {
+        // Si occupé, on décale de 1 heure
+        console.log(`⚠️ Slot ${suggestedDate.toLocaleString()} occupé par "${conflict.title}", décalage...`);
+        suggestedDate.setHours(suggestedDate.getHours() + 1);
+
+        // Si on dépasse 17h, on passe au lendemain 14h
+        if (suggestedDate.getHours() >= 17) {
+          suggestedDate.setDate(suggestedDate.getDate() + 1);
+          suggestedDate.setHours(14, 0, 0, 0);
+        }
+      } else {
+        // Le créneau est libre !
+        isSlotOccupied = false;
+      }
+    }
+
+    // 2. Création de la tâche pour Timo (Blocage du calendrier)
+    await Task.create({
+      title: `Onboarding : ${newEmployee.name}`,
+      description: `Session d'intégration officielle pour le nouveau collaborateur ${newEmployee.name}.`,
+      deadline: suggestedDate, // ✅ Utilise ton champ 'deadline'
+      category: 'meeting',
+      priority: 'high',
+      status: 'todo',
+      userId: 'current_user' // Valeur par défaut de ton modèle
+    });
+
+    // 3. ✅ Envoi de la notification mail par Hera
+    const formattedDate = suggestedDate.toLocaleString('fr-FR', {
+      weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit'
+    });
+
+    await mailService.sendGroupMeetingInvitation(candidate.email, {
+      name: candidate.name,
+      interview_date: formattedDate,
+      meeting_link: "https://meet.jit.si/ETeam_Discovery_Session"
+    });
+
+    // 4. On retire le candidat de la liste
+    await Candidate.findByIdAndDelete(candidateId);
+
+    res.json({ 
+      success: true, 
+      message: "Embauche réussie. Timo a planifié le RDV.",
+      plannedDate: formattedDate 
+    });
 
   } catch (err) {
+    console.error("❌ Erreur hireCandidate:", err);
     res.status(500).json({ error: err.message });
   }
 };
@@ -249,9 +383,11 @@ exports.generateDocument = async (req, res) => {
       : "Indéterminée (Contrat CDI)";
 
     let content = "";
+// Dans controllers/heraController.js
+// Dans controllers/heraController.js
 
-    if (doc_type === 'contract') {
-      content = `
+if (doc_type === 'contract') {
+  content = `
 ==========================================
            CONTRAT DE TRAVAIL
 ==========================================
@@ -260,7 +396,7 @@ RÉFÉRENCE : ET-2026-${employee_id.toString().substring(0, 5).toUpperCase()}
 FAIT LE : ${today}
 
 ENTRE :
-La société E-TEAM, représentée par l'IA HERA.
+La société E-TEAM, 
 
 ET LE COLLABORATEUR :
 Nom : ${employee.name}
@@ -271,8 +407,8 @@ Département : ${employee.department}
 DÉTAILS DU CONTRAT :
 ------------------------------------------
 TYPE DE CONTRAT  : ${employee.contract?.type || 'CDI'}
-DATE DE DÉBUT    : ${startDate}  <-- ✅
-DATE DE FIN      : ${endDate}    <-- ✅
+DATE DE DÉBUT    : ${startDate}
+DATE DE FIN      : ${endDate}
 RÉMUNÉRATION     : ${employee.salary || 3000} € / mois
 
 CLAUSES :
@@ -283,8 +419,8 @@ Le présent contrat est régi par les lois en vigueur.
 ------------------------------------------
 SIGNATURE ÉLECTRONIQUE HERA IA : [CERTIFIÉ]
 ==========================================
-      `;
-    }
+  `;
+}
 
     // 3. On enregistre le document avec les VRAIES dates dans l'historique
     await HeraAction.create({
@@ -383,77 +519,94 @@ async function executeLeaveDecision(data) {
 }
 // --- Helper pour calculer le prochain vendredi à 14h ---
 // --- Helper pour calculer le prochain vendredi à 14h ---
+// ── HELPER : CALCUL DU PROCHAIN VENDREDI 14H ──
 function getNextSessionDate() {
   const now = new Date();
   const nextFriday = new Date();
+  // Calcule le nombre de jours jusqu'au vendredi (5)
   nextFriday.setDate(now.getDate() + (5 - now.getDay() + 7) % 7);
   nextFriday.setHours(14, 0, 0, 0);
-  if (now > nextFriday) nextFriday.setDate(nextFriday.getDate() + 7);
+  
+  // Si on est déjà vendredi après 14h, on passe au vendredi suivant
+  if (now > nextFriday) {
+    nextFriday.setDate(nextFriday.getDate() + 7);
+  }
   return nextFriday;
 }
-// ── FONCTION : CANDIDATURE (ATS) - VERSION UNIQUE ET NETTOYÉE ──
+
 exports.processCandidacy = async (req, res) => {
-  console.log("📩 [1/4] Nouvelle candidature reçue pour :", req.body.name);
-
   try {
-    const { name, email, resume_text, job_offer_id } = req.body;
-
-    // 1. Analyse IA
-    console.log("🧠 [2/4] Hera analyse le CV via Groq...");
-    const analysis = await heraAgent.analyzeCandidate(resume_text || "Aucun CV fourni", "Profil recherché");
+    const { name, email, resume_text } = req.body;
+    const analysis = await heraAgent.analyzeCandidate(resume_text, "Profil E-Team");
     const score = analysis.score || 0;
-    console.log(`📊 Score attribué par Hera : ${score}%`);
 
-    let status = 'applied';
-    let meeting_link = null;
-    let interview_date = null;
+    if (score >= 80) {
+      // ✅ LIEN INDIVIDUEL UNIQUE
+      const individualMeet = `https://meet.jit.si/ETeam_Interview_${name.replace(/\s+/g, '_')}`;
+        const date = await timo.autoPlanMeeting(name, "Interview");
 
-    if (score > 70) {
-      console.log("✨ Score élevé (>70), génération d'un lien de réunion...");
-      status = 'interview_scheduled';
-      meeting_link = `https://meet.jit.si/ETeam_Session_${new Date().getTime()}`;
-      interview_date = getNextSessionDate();
-
-      const formattedDate = interview_date.toLocaleDateString('fr-FR', {
-        weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit'
+      await mailService.sendInterviewInvitation(email, { 
+        name, 
+        meeting_link: individualMeet 
       });
-
-      // ENVOI DU MAIL INVITATION
-      console.log("📧 Tentative d'envoi du mail d'invitation à :", email);
-      await mailService.sendCandidacyInvitation(email, {
-        name,
-        score,
-        meeting_link,
-        interview_date: formattedDate
-      });
+      
+      await Candidate.create({ name, email, status: 'interview_scheduled', score_ia: score, resume_text, meeting_link: individualMeet });
     } else {
-      console.log("ℹ️ Score insuffisant pour entretien immédiat. Envoi confirmation simple.");
       await mailService.sendCandidacyConfirmation(email, name);
+      await Candidate.create({ name, email, status: 'applied', score_ia: score, resume_text });
     }
-
-    // 2. Gestion de l'ID Offre (Optionnel)
-    let validJobId = null;
-    if (job_offer_id && mongoose.Types.ObjectId.isValid(job_offer_id)) {
-      validJobId = job_offer_id;
-    }
-
-    // 3. Sauvegarde
-    console.log("💾 [3/4] Enregistrement dans MongoDB...");
-    const candidate = await Candidate.create({
-      name, email, status, score_ia: score, 
-      meeting_link, interview_date, resume_text,
-      job_offer_id: validJobId
-    });
-
-    console.log("✅ [4/4] Processus terminé avec succès pour", name);
-    res.json({ success: true, score_ia: score, candidate });
-
-  } catch (err) {
-    console.error("❌ ERREUR DANS processCandidacy :", err);
-    res.status(500).json({ success: false, error: err.message });
-  }
+    res.json({ success: true, score });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 };
 
+
+// ── ÉTAPE 2 : EMBOUCHE ET SESSION COLLECTIVE (Après validation Admin) ──
+exports.hireCandidate = async (req, res) => {
+  try {
+    const candidateId = req.params.id;
+    const candidate = await Candidate.findById(candidateId);
+
+    if (!candidate) return res.status(404).json({ message: "Candidat non trouvé" });
+
+    // 1. On crée le profil Employé officiellement
+    const newEmployee = await Employee.create({
+      name: candidate.name,
+      email: candidate.email,
+      status: 'active',
+      role: "Collaborateur", // À modifier dynamiquement si besoin
+      leave_balance: { annual: 25, sick: 10, urgent: 3 }
+    });
+
+    // 2. On prépare la date de la session de bienvenue (Vendredi 14h)
+    const sessionDate = getNextSessionDate();
+    const formattedDate = sessionDate.toLocaleDateString('fr-FR', {
+      weekday: 'long', 
+      day: 'numeric', 
+      month: 'long', 
+      hour: '2-digit', 
+      minute: '2-digit'
+    });
+  const date = await timo.autoPlanMeeting(newEmployee.name, "Onboarding");
+
+    // 3. ✅ CAS C : Embauche validée -> On invite au MEET COLLECTIF D'ÉQUIPE (Noir & Lime)
+    // Utilise la fonction : sendGroupMeetingInvitation
+    await mailService.sendGroupMeetingInvitation(candidate.email, {
+      name: candidate.name,
+      interview_date: formattedDate,
+      meeting_link: "https://meet.jit.si/ETeam_Discovery_Session_Team"
+    });
+
+    // 4. On retire le candidat de la liste de recrutement
+    await Candidate.findByIdAndDelete(candidateId);
+
+    console.log(`✅ ${candidate.name} est embauché. Mail de bienvenue envoyé.`);
+    res.json({ success: true, message: "Embauche réussie et mail d'équipe envoyé." });
+
+  } catch (err) {
+    console.error("❌ Erreur hireCandidate:", err);
+    res.status(500).json({ error: err.message });
+  }
+};
 // ══════════════════════════════════════════════════════════════════════════
 // EXPORTS POUR LES ROUTES
 // ══════════════════════════════════════════════════════════════════════════
@@ -506,56 +659,29 @@ exports.urgentLeave = async (req, res) => {
 // ── FONCTION : ONBOARDING (Vraie Bienvenue) ──
 exports.onboarding = async (req, res) => {
   try {
-    // 1. Création de l'employé en base
-    const employee = await Employee.create(req.body);
+    const { name, email, password } = req.body;
+    // On génère un mot de passe s'il n'y en a pas
+    const tempPassword = req.body.password || `ET-${Math.floor(1000 + Math.random() * 9000)}`;
 
-    // 2. 📝 GÉNÉRATION DU CONTRAT PAR HERA
-    const dateStr = new Date().toLocaleDateString('fr-FR');
-    const contractText = `
-      CONTRAT DE TRAVAIL - E-TEAM
-      ------------------------------------
-      RÉFÉRENCE : ET-${Math.floor(Math.random() * 10000)}
-      DATE D'ÉMISSION : ${dateStr}
-      
-      ENTRE : La société E-Team, représentée par l'agent IA Hera.
-      ET : M./Mme ${employee.name}.
-      
-      Il est convenu ce qui suit :
-      POSTE : ${employee.role}
-      DÉPARTEMENT : ${employee.department}
-      TYPE DE CONTRAT : ${employee.contract?.type || 'CDI'}
-      
-      Hera IA certifie que ce document est généré automatiquement
-      et fait foi de l'intégration du collaborateur dans le système.
-    `;
+    // ✅ ÉTAPE CRUCIALE : Hachage
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(tempPassword, salt);
 
-    // 3. ✅ ENREGISTREMENT DANS HERA ACTION (Pour que Flutter le voie)
-    // On utilise 'contract_renewal' car c'est ce que ton Front cherche
-    await HeraAction.create({
-      employee_id: employee._id,
-      action_type: 'contract_renewal', 
-      details: { 
-        doc_type: 'contract',
-        content: contractText // C'est ce texte qui sera affiché dans la pop-up
-      },
-      triggered_by: 'hera_auto'
+    // Création de l'employé avec le mot de passe HACHÉ
+    const employee = await Employee.create({
+      ...req.body,
+      password: hashedPassword, // 👈 On enregistre la version cryptée
+      status: 'active'
     });
 
-    // 4. Envoi du mail de bienvenue
-    await mailService.sendWelcomeEmail(employee.email, employee.name);
+    // Envoi du mail avec le mot de passe en CLAIR (pour que l'utilisateur le connaisse)
+    await mailService.sendWelcomeEmail(employee.email, employee.name, tempPassword);
 
-    res.status(201).json({ 
-      success: true, 
-      message: "Onboarding réussi et contrat généré",
-      employee_id: employee._id 
-    });
-
+    res.status(201).json({ success: true, message: "Onboarding réussi" });
   } catch (err) {
-    console.error("Erreur Onboarding:", err);
     res.status(500).json({ error: err.message });
   }
 };
-
 exports.getLeaves = async (req, res) => {
   try {
     const leaves = await LeaveRequest.find({ employee_id: req.params.employee_id }).sort({ created_at: -1 });
@@ -642,36 +768,145 @@ exports.getAdminStats = async (req, res) => {
   }
 };
 exports.getAllEmployees = async (req, res) => {
-  const employees = await Employee.find();
-  res.json({ success: true, employees });
+  try {
+    // ✅ On ignore les 'inactive' pour ne pas polluer l'écran
+    const employees = await Employee.find({ 
+      status: { $in: ['active', 'onboarding', 'offboarding'] } 
+    }).sort({ name: 1 });
+
+    res.json({ success: true, employees });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
 };
 exports.getRecentActions = async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit) || 5;
+    const limit = parseInt(req.query.limit) || 8;
 
-    // Récupérer les dernières actions de Hera (ou les dernières demandes de congés)
     const recentActions = await HeraAction.find()
       .sort({ created_at: -1 })
       .limit(limit)
-      .populate('employee_id', 'name role') // Pour avoir le nom de l'employé
+      .populate('employee_id', 'name role')
       .lean();
 
-    // Formater pour Flutter
     const formattedActions = recentActions.map(action => ({
       _id: action._id,
       employee_name: action.employee_id?.name || 'Système',
       action_type: action.action_type,
+      // ✅ AJOUTE CETTE LIGNE POUR ENVOYER LES DÉTAILS À FLUTTER
+      details: action.details, 
       created_at: action.created_at,
       badge: action.triggered_by === 'hera_auto' ? 'IA' : 'ADMIN'
     }));
 
-    return res.json({
-      success: true,
-      recent_actions: formattedActions
-    });
+    return res.json({ success: true, recent_actions: formattedActions });
 
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
+  }
+};
+// ── NOUVELLE FONCTION : TRAITER LA DÉMISSION (OFF-BOARDING) ──
+exports.processResignation = async (req, res) => {
+  try {
+    const { email } = req.body;
+    const employee = await Employee.findOne({ email: email.toLowerCase().trim() });
+    
+    if (!employee) return res.status(404).json({ success: false, message: "Employé non trouvé" });
+
+    // ✅ APPEL À TIMO (Attendre l'objet de retour)
+   const planning = await timo.autoPlanMeeting(employee.name, "Démission");
+
+await mailService.sendHeraConvocation(employee.email, {
+    name: employee.name,
+    date: planning.date,
+    type: "Entretien de départ",
+    mode: "Remote", // Ou "On-site"
+    meeting_link: `https://meet.jit.si/ETeam_Exit_${employee.name.replace(/\s+/g, '_')}` // ✅ ICI ON CRÉE LE LIEN
+});
+
+    res.json({ success: true, message: `Rendez-vous fixé au ${planning.date}` });
+
+  } catch (err) {
+    console.error("🔥 CRASH BACKEND:", err.message); // Regarde ton terminal Node !
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// controllers/heraController.js
+
+exports.getAgentInteractions = async (req, res) => {
+  try {
+    // 1. On récupère les 10 derniers logs bruts de la base de données
+    const rawLogs = await HeraAction.find()
+      .sort({ created_at: -1 })
+      .limit(10)
+      .populate('employee_id', 'name');
+
+    // 2. On prépare un prompt pour que l'IA interprète ces logs
+    const prompt = `
+      Tu es Dexo, le Superviseur de l'écosystème E-Team. 
+      Analyse ces logs système et transforme-les en un tableau JSON d'interactions entre agents.
+      
+      LOGS À ANALYSER :
+      ${JSON.stringify(rawLogs)}
+
+      RÈGLES STRICTES :
+      - Tu dois identifier l'émetteur (sender) et le récepteur (receiver) parmi : hera, echo, timo, dexo, kash.
+      - Pour une 'doc_request', le sender est 'dexo' et le receiver est 'hera'.
+      - Pour une 'absence_alert', le sender est 'hera' et le receiver est 'echo'.
+      - Pour une 'offboarding_started', le sender est 'hera' et le receiver est 'timo'.
+      - 'summary' doit être une phrase technique et pro.
+      - 'status' doit être 'success' ou 'encrypted'.
+
+      FORMAT DE RÉPONSE (JSON UNIQUEMENT) :
+      {
+        "interactions": [
+          { "id": "ID_DU_LOG", "sender": "nom", "receiver": "nom", "actionType": "type", "summary": "phrase", "timestamp": "ISO_DATE", "status": "success" }
+        ]
+      }
+    `;
+
+    // 3. Appel à l'IA pour interpréter les logs
+    const aiResponse = await heraAgent.llm.invoke(prompt);
+    
+    // On nettoie la réponse pour être sûr d'avoir du JSON pur
+    const cleanJson = aiResponse.content.match(/\{.*\}/s)[0];
+    const parsedData = JSON.parse(cleanJson);
+
+    res.json({ success: true, ...parsedData });
+
+  } catch (err) {
+    console.error("❌ Erreur IA Logs:", err.message);
+    res.status(500).json({ success: false, error: "L'IA n'a pas pu interpréter les logs." });
+  }
+};
+// controllers/heraController.js
+
+exports.getAgentInteractionStats = async (req, res) => {
+  try {
+    // 1. On compte le total des interactions (logs HeraAction)
+    const total = await HeraAction.countDocuments();
+
+    // 2. On compte les échanges "Encrypted" (tous les doc_request qui ont un hash)
+    const encrypted = await HeraAction.countDocuments({ action_type: 'doc_request' });
+
+    // 3. On compte les succès (on considère les alertes staffing et offboarding comme succès immédiat)
+    const successful = await HeraAction.countDocuments({ 
+      action_type: { $in: ['absence_alert', 'offboarding_started'] } 
+    }) + encrypted;
+
+    res.json({
+      success: true,
+      stats: {
+        total: total,
+        successful: successful,
+        encrypted: encrypted,
+        pending: 0,
+        failed: 0
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
   }
 };
 exports.getAllActions = (req, res) => res.json({ success: true, actions: [] });

@@ -82,5 +82,16 @@ class EchoService {
     }
   }
 }
+// Dans utils/emailService.js
+exports.sendHeraDocumentEmail = async (email, docData) => {
+  const mailOptions = {
+    from: '"Hera (E-Team RH)" <votre-email-projet@gmail.com>', // Hera envoie
+    to: email,
+    subject: `📩 Votre ${docData.type} - E-Team`,
+    text: `Bonjour ${docData.name},\n\nDexo a généré votre document officiel (${docData.id}).\n\nJe vous le transmets en pièce jointe.\n\nCordialement,\nHera, votre Agent RH.`,
+  };
+
+  return transporter.sendMail(mailOptions);
+};
 
 module.exports = new EchoService();
