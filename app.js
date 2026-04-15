@@ -4,10 +4,22 @@ const path = require('path'); // ✅ AJOUTÉ pour gérer les chemins de fichiers
 const cors = require('cors');
 const mongoose = require('mongoose');
 
+// 1. Initialize App First
+const app = express();
+
+// 2. Middlewares (CORS & Body Parsers)
+app.use(cors({
+  origin: 'http://localhost:4200',
+  credentials: true
+}));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true }));
+
 // Import des Routes
 const employeeAuthRoutes = require('./routes/employeeAuth');
 const echoRoutes = require('./routes/echoRoutes');
 const authRoutes = require('./routes/authRoutes');
+const employeeAuthRoutes = require('./routes/employeeAuth');
 const heraRoutes = require('./routes/heraRoutes');
 const emailRoutes = require('./routes/emailRoutes');
 const agentRoutes = require('./routes/agentRoutes');
@@ -52,7 +64,12 @@ app.get('/candidature', (req, res) => res.sendFile(formHtmlPath));
 app.get('/', (req, res) => res.json({ status: 'running', service: 'Hera Assistant API' }));
 app.get('/health', (req, res) => res.json({ status: 'OK', db: mongoose.connection.readyState === 1 }));
 
+// ✅ Auth routes (User registration & login)
 app.use('/api/auth', authRoutes);
+
+// ✅ Employee Auth routes (Employee portal login)
+app.use('/api/employees', employeeAuthRoutes); 
+
 app.use('/api/hera', heraRoutes);
 app.use('/api/emails', emailRoutes);
 app.use('/api/agents', agentRoutes);
@@ -75,6 +92,8 @@ app.get('/api/kash/test-weekly', async (req, res) => {
 // 4. Gestion des erreurs (DOIT ÊTRE APRÈS LES ROUTES)
 app.use((req, res) => res.status(404).json({ success: false, message: "Route non trouvée" }));
 app.use(errorHandler);
+
+require('./services/automatedBriefing');
 
 // 5. Démarrage du serveur et des Watchers
 const PORT = process.env.PORT || 3000;

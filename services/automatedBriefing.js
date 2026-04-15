@@ -6,13 +6,27 @@ const fs = require('fs');
 const PDFDocument = require('pdfkit'); // Moteur PDF
 const dexoController = require('../controllers/dexoController');
 
-// Configuration
-const token = '8667434515:AAH2LwZ9z2Me8NcOBIAfOQLXNa30HkkHHYQ'; 
-const bot = new TelegramBot(token, { polling: true });
-const chatId = '8680134191'; 
+// 1. Configuration - Disable bot if token is not configured
+const token = process.env.TELEGRAM_BOT_TOKEN;
+const chatId = process.env.TELEGRAM_CHAT_ID || '8680134191';
+
+// Only initialize bot if token is configured
+let bot = null;
+if (token) {
+  bot = new TelegramBot(token, { polling: false }); // polling: false to prevent 401 spam
+  console.log('✅ Telegram bot initialized with polling disabled');
+} else {
+  console.warn('⚠️ TELEGRAM_BOT_TOKEN not configured. Telegram briefing disabled. Set TELEGRAM_BOT_TOKEN in .env to enable.');
+} 
 
 const runAutomatedVocalBriefing = async () => {
-    console.log("🕒 [DEXO] Exécution du rapport quotidien (Vocal + PDF)...");
+    // Skip if bot is not initialized
+    if (!bot) {
+        console.warn('⚠️ Telegram bot not initialized. Skipping briefing.');
+        return;
+    }
+
+    console.log("🕒 [DEXO] Déclenchement du rapport...");
 
     try {
         // A. Récupération du texte IA
