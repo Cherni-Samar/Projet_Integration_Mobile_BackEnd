@@ -39,15 +39,15 @@ const watchStaffing = async () => {
 
         // 2. ✅ ENREGISTRER DANS LA TABLE 'emails' POUR ECHO
         // C'est ici que Echo "reçoit" techniquement le message dans son interface
-        await InboxEmail.create({
+        const heraEmail = await InboxEmail.create({
           subject: subject,
-          sender: "hera@e-team.com", // L'expéditeur est Hera
-          to: "echo@e-team.com",     // Le destinataire est Echo
+          sender: "hera@e-team.com",
+          to: "echo@e-team.com",
           content: mailContent,
-          priority: 'high',          // Priorité haute car manque de staff
+          priority: 'high',
           isUrgent: true,
           category: 'recruitment',
-          source: 'receive',         // Marqué comme reçu
+          source: 'receive',
           isRead: false
         });
 
@@ -58,13 +58,45 @@ const watchStaffing = async () => {
           triggered_by: 'hera_auto'
         });
 
-        console.log(`✅ Message envoyé et enregistré pour Echo concernant le département ${dept}`);
+        // 4. ✅ APPELER AUTOMATIQUEMENT ECHO POUR PUBLIER SUR LINKEDIN
+   try {
+          const echoBaseUrl = process.env.ECHO_API_URL || 'http://localhost:3000/api/echo';
+          
+          // Assure-toi que la variable s'appelle bien "response" ici
+          const response = await fetch(`${echoBaseUrl}/receive-staffing-alert`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              emailId: heraEmail._id, // On passe l'ID du mail qu'on vient de créer
+              department: dept,
+              currentCount: count,
+              maxCapacity: config.max,
+              shortage: config.max - count,
+              postedBy: 'hera_auto_watcher@e-team.com',
+            })
+          });
+          const echoResult = await response.json(); // Utilise "response" ici
+            if (echoResult.success) {
+            console.log(`💼 [STAFFING WATCHER] Echo a publié automatiquement sur LinkedIn pour ${dept} ✅`);
+          } else {
+            console.warn(`⚠️ [STAFFING WATCHER] Echo a répondu avec une erreur :`, echoResult.message);
+          }
+        } catch (fetchErr) {
+          // C'est ici que l'erreur s'affichait car echoResponse n'existait pas
+          console.warn(`⚠️ [STAFFING WATCHER] Erreur communication API Echo :`, fetchErr.message);
+        }
+
+        console.log(`✅ Message envoyé et traité automatiquement par Echo concernant le département ${dept}`);
       }
     }
   }
 };
 
-// Se lance toutes les 30 minutes
-cron.schedule('*/30 * * * *', watchStaffing);
+// Toutes les 30 min — report sur le tick suivant pour limiter les chevauchements avec le reste du process (node-cron)
+cron.schedule('*/30 * * * *', () => {
+  setImmediate(() => {
+    watchStaffing().catch((err) => console.error('staffingWatcher:', err.message));
+  });
+});
 
 module.exports = { watchStaffing };

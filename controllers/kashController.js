@@ -1,30 +1,60 @@
 const Expense = require('../models/Expense');
 const User = require('../models/User');
+const Employee = require('../models/Employee');
+const Employee = require('../models/Employee');
 const Reminder = require('../models/Reminder');
 const axios = require('axios');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
+const Groq = require('groq-sdk');
+const Groq = require('groq-sdk');
 const emailSender = require('../services/emailSender');
 
 const ENERGY_COST_ADD_EXPENSE = 5;
 const ENERGY_COST_ANALYZE_RECEIPT = 10;
 
-const GEMINI_MODEL_NAME = 'gemini-1.5-flash-latest';
+const GEMINI_MODEL_NAME = 'gemini-1.5-flash';
+
+// Initialize Groq client at module level
+let groqClient = null;
+function getGroqClient() {
+  if (!groqClient) {
+    const apiKey = process.env.GROQ_API_KEY;
+    if (!apiKey) {
+      throw new Error('GROQ_API_KEY not configured');
+    }
+    groqClient = new Groq({ apiKey });
+  }
+  return groqClient;
+}
+const GEMINI_MODEL_NAME = 'gemini-1.5-flash';
+
+// Initialize Groq client at module level
+let groqClient = null;
+function getGroqClient() {
+  if (!groqClient) {
+    const apiKey = process.env.GROQ_API_KEY;
+    if (!apiKey) {
+      throw new Error('GROQ_API_KEY not configured');
+    }
+    groqClient = new Groq({ apiKey });
+  }
+  return groqClient;
+}
 
 let geminiModel;
 
 function getGeminiModel() {
   const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
-    const err = new Error('GEMINI_API_KEY manquant côté serveur');
-    err.statusCode = 500;
-    throw err;
-  }
+  if (!apiKey) throw new Error('GEMINI_API_KEY missing');
+  if (!apiKey) throw new Error('GEMINI_API_KEY missing');
 
   if (!geminiModel) {
-    const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY);
+    // DO NOT add apiVersion here, let the latest SDK handle it
+    const genAI = new GoogleGenerativeAI(apiKey);
+    // DO NOT add apiVersion here, let the latest SDK handle it
+    const genAI = new GoogleGenerativeAI(apiKey);
     geminiModel = genAI.getGenerativeModel({ model: GEMINI_MODEL_NAME });
   }
-
   return geminiModel;
 }
 
@@ -137,45 +167,192 @@ function validateGeminiExtraction(payload) {
 async function analyzeReceiptWithGemini({ inlineData }) {
   const model = getGeminiModel();
 
-  const prompt =
-    'Tu es Kash, un expert financier. Analyse cette image de facture/reçu. Extrais : amount (number), currency (ex: EUR), vendor (nom du magasin), category (SaaS, Marketing, Travel, Office, Salaries), date (format ISO). Si l\'image n\'est pas un document financier, renvoie {"error": "Invalid document"}.';
+  const prompt = `Tu es Kash, un expert financier. Analyse cette image de reçu. 
+  Retourne UNIQUEMENT un objet JSON avec ces champs: 
+  amount (nombre), currency (string), vendor (string), category (SaaS, Marketing, Travel, Office, ou Salaries), date (ISO string), description (string).
+  Si ce n'est pas un reçu, retourne {"error": "Invalid document"}.`;
 
-  console.log('🚀 Tentative avec gemini-1.5-flash-latest...');
-  const result = await model.generateContent({
-    generationConfig: {
-      responseMimeType: 'application/json',
-      temperature: 0,
-    },
-    contents: [
-      {
-        role: 'user',
-        parts: [
-          { text: prompt },
-          { inlineData: { data: inlineData.base64, mimeType: inlineData.mimeType } },
-        ],
-      },
-    ],
-  });
+  // Use the standard multimodal call
+  const result = await model.generateContent([
+    prompt,
+    {
+      inlineData: {
+        data: inlineData.base64,
+        mimeType: inlineData.mimeType
+      }
+    }
+  ]);
 
-  const text = result?.response?.text?.();
-  if (!text || typeof text !== 'string') {
-    const err = new Error('Réponse Gemini vide ou illisible');
-    err.statusCode = 502;
-    throw err;
-  }
+  const response = await result.response;
+  let text = response.text();
+  
+  // Clean potential markdown
+  text = text.replace(/```json/g, '').replace(/```/g, '').trim();
 
   const parsed = safeJsonParse(text);
-  if (!parsed.ok) {
-    const err = new Error('Réponse Gemini non-JSON (parsing impossible)');
-    err.statusCode = 502;
-    err.details = { raw: text };
-    throw err;
-  }
+  if (!parsed.ok) throw new Error('Gemini returned invalid JSON: ' + text);
 
   return parsed.value;
 }
 
-// ============================================================================
+/**
+ * Analyze receipt via Mistral AI Vision API
+ * Direct API call to api.mistral.ai/v1/chat/completions
+ * Uses Pixtral model for vision capabilities
+ */
+async function analyzeReceiptWithMistral(base64String, mimeType) {
+  const apiKey = process.env.MISTRAL_API_KEY;
+  if (!apiKey) {
+    throw new Error('MISTRAL_API_KEY not configured');
+  }
+
+  const prompt = `You are a financial OCR bot. Analyze this receipt and return ONLY a JSON object: {amount: number, currency: 'TND', vendor: string, category: string, date: string, description: string}.`;
+
+  try {
+    const response = await axios.post(
+      'https://api.mistral.ai/v1/chat/completions',
+      {
+        model: 'pixtral-12b-latest',
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: prompt,
+              },
+              {
+                type: 'image_url',
+                image_url: {
+                  url: `data:${mimeType};base64,${base64String}`,
+                },
+              },
+            ],
+          },
+        ],
+      },
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+        },
+      }
+    );
+
+    const responseText = response.data?.choices?.[0]?.message?.content || '';
+    if (!responseText) {
+      throw new Error('Empty response from Mistral API');
+    }
+
+    // Remove markdown JSON blocks
+    let cleanedText = responseText
+      .replace(/```json\s*/gi, '')
+      .replace(/```\s*/gi, '')
+      .trim();
+
+    // Parse JSON directly
+    const parsed = safeJsonParse(cleanedText);
+    if (!parsed.ok) {
+      throw new Error('Response parsing failed: ' + cleanedText);
+    }
+  const prompt = `Tu es Kash, un expert financier. Analyse cette image de reçu. 
+  Retourne UNIQUEMENT un objet JSON avec ces champs: 
+  amount (nombre), currency (string), vendor (string), category (SaaS, Marketing, Travel, Office, ou Salaries), date (ISO string), description (string).
+  Si ce n'est pas un reçu, retourne {"error": "Invalid document"}.`;
+
+  // Use the standard multimodal call
+  const result = await model.generateContent([
+    prompt,
+    {
+      inlineData: {
+        data: inlineData.base64,
+        mimeType: inlineData.mimeType
+      }
+    }
+  ]);
+
+  const response = await result.response;
+  let text = response.text();
+  
+  // Clean potential markdown
+  text = text.replace(/```json/g, '').replace(/```/g, '').trim();
+
+  const parsed = safeJsonParse(text);
+  if (!parsed.ok) throw new Error('Gemini returned invalid JSON: ' + text);
+
+  return parsed.value;
+}
+
+/**
+ * Analyze receipt via Mistral AI Vision API
+ * Direct API call to api.mistral.ai/v1/chat/completions
+ * Uses Pixtral model for vision capabilities
+ */
+async function analyzeReceiptWithMistral(base64String, mimeType) {
+  const apiKey = process.env.MISTRAL_API_KEY;
+  if (!apiKey) {
+    throw new Error('MISTRAL_API_KEY not configured');
+  }
+
+  const prompt = `You are a financial OCR bot. Analyze this receipt and return ONLY a JSON object: {amount: number, currency: 'TND', vendor: string, category: string, date: string, description: string}.`;
+
+  try {
+    const response = await axios.post(
+      'https://api.mistral.ai/v1/chat/completions',
+      {
+        model: 'pixtral-12b-latest',
+        messages: [
+          {
+            role: 'user',
+            content: [
+              {
+                type: 'text',
+                text: prompt,
+              },
+              {
+                type: 'image_url',
+                image_url: {
+                  url: `data:${mimeType};base64,${base64String}`,
+                },
+              },
+            ],
+          },
+        ],
+      },
+      {
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${apiKey}`,
+        },
+      }
+    );
+
+    const responseText = response.data?.choices?.[0]?.message?.content || '';
+    if (!responseText) {
+      throw new Error('Empty response from Mistral API');
+    }
+
+    // Remove markdown JSON blocks
+    let cleanedText = responseText
+      .replace(/```json\s*/gi, '')
+      .replace(/```\s*/gi, '')
+      .trim();
+
+    // Parse JSON directly
+    const parsed = safeJsonParse(cleanedText);
+    if (!parsed.ok) {
+      throw new Error('Response parsing failed: ' + cleanedText);
+    }
+
+    return parsed.value;
+  } catch (error) {
+    console.log('FULL ERROR DATA:', JSON.stringify(error.response?.data, null, 2));
+    if (error.response?.status) {
+      throw new Error(`Mistral API error (${error.response.status}): ${error.response.data?.error?.message || error.message}`);
+    }
+    throw new Error(`Mistral API error: ${error.message}`);
+  }
+}
 // HELPER FUNCTIONS
 // ============================================================================
 
@@ -744,6 +921,342 @@ exports.recalculateBudget = async (req, res, next) => {
         budget: updatedUser?.budget || [],
       },
     });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Employee expense submission via file upload
+ * POST /api/kash/employee/upload
+ * Requires: employee JWT token + multipart file (image/PDF)
+ * 
+ * Process:
+ * 1. Accept image/PDF file via multer
+ * 2. Convert to base64
+ * 3. Analyze with Gemini AI
+ * 4. Find employee's manager_email from Employee collection
+ * 5. Find User (CEO) with that email to get managerId
+ * 6. Save expense to Expense collection
+ * 7. Trigger budget alert if needed
+ */
+exports.submitEmployeeExpense = async (req, res, next) => {
+  try {
+    const employeeId = req.employee?.id;
+
+    if (!employeeId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Employee token required'
+      });
+    }
+
+    // Check if file was uploaded
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: 'File (image or PDF) is required'
+      });
+    }
+
+    // Read file and convert to base64
+    const fileBuffer = req.file.buffer;
+    const base64String = fileBuffer.toString('base64');
+    const mimeType = req.file.mimetype || 'image/png';
+
+    // Prepare inline data for Gemini
+    const inlineData = {
+      base64: normalizeBase64String(base64String),
+      mimeType: mimeType
+    };
+
+    // Analyze receipt with Mistral AI Pixtral
+    let extracted;
+    try {
+      extracted = await analyzeReceiptWithMistral(base64String, mimeType);
+      const validation = validateGeminiExtraction(extracted);
+
+      if (!validation.ok) {
+        return res.status(400).json({
+          success: false,
+          message: validation.message || 'Invalid document analysis'
+        });
+      }
+
+      if (validation.invalidDocument) {
+        return res.status(400).json({
+          success: false,
+          message: validation.error || 'Invalid document'
+        });
+      }
+    } catch (err) {
+      return res.status(502).json({
+        success: false,
+        message: 'Failed to analyze document: ' + err.message
+      });
+    }
+
+    // Find the employee record
+    const employee = await Employee.findById(employeeId).lean();
+    if (!employee) {
+      return res.status(404).json({
+        success: false,
+        message: 'Employee record not found'
+      });
+    }
+
+    // Find the employee's manager (CEO) by email
+    if (!employee.manager_email) {
+      return res.status(400).json({
+        success: false,
+        message: 'Manager email not configured for this employee'
+      });
+    }
+
+    const managerUser = await User.findOne({ email: employee.manager_email }).lean();
+    if (!managerUser) {
+      return res.status(404).json({
+        success: false,
+        message: `Manager (CEO) with email ${employee.manager_email} not found`
+      });
+    }
+
+    const managerId = managerUser._id;
+
+    // Create expense record
+    try {
+      const expense = await Expense.create({
+        managerId: managerId,
+        employeeId: employeeId,
+        amount: extracted.amount,
+        currency: extracted.currency || 'USD',
+        vendor: extracted.vendor || 'Unknown',
+        category: extracted.category || 'Other',
+        description: extracted.description || '',
+        receiptUrl: null, // Could store file URL if using cloud storage
+        status: 'pending',
+        date: extracted.date ? new Date(extracted.date) : new Date(),
+      });
+
+      // Recalculate budget spent for the manager
+      try {
+        const updatedManager = await recalculateBudgetSpent(managerId);
+        
+        // Check if budget alert should be sent
+        if (updatedManager && updatedManager.budget) {
+          const category = extracted.category || 'Other';
+          const matchedBudget = updatedManager.budget.find(b => b.project === category);
+          
+          if (matchedBudget && matchedBudget.amount > 0) {
+            const percentage = (matchedBudget.spent / matchedBudget.amount) * 100;
+            let alertLevel = null;
+            
+            if (percentage >= 100) {
+              alertLevel = 'CRITICAL';
+            } else if (percentage >= 80) {
+              alertLevel = 'WARNING';
+            }
+
+            if (alertLevel) {
+              await sendBudgetAlertEmail(updatedManager, matchedBudget, alertLevel, category);
+            }
+          }
+        }
+      } catch (budgetErr) {
+        console.warn(`[Kash] Failed to recalculate budget for manager: ${budgetErr.message}`);
+        // Don't fail expense creation if budget update fails
+      }
+
+      return res.status(201).json({
+        success: true,
+        message: 'Expense submitted successfully',
+        data: {
+          expense: {
+            id: expense._id,
+            amount: expense.amount,
+            currency: expense.currency,
+            vendor: expense.vendor,
+            category: expense.category,
+            description: expense.description,
+            date: expense.date,
+            status: expense.status,
+          }
+        }
+      });
+    } catch (err) {
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to save expense: ' + err.message
+      });
+    }
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * Employee expense submission via file upload
+ * POST /api/kash/employee/upload
+ * Requires: employee JWT token + multipart file (image/PDF)
+ * 
+ * Process:
+ * 1. Accept image/PDF file via multer
+ * 2. Convert to base64
+ * 3. Analyze with Gemini AI
+ * 4. Find employee's manager_email from Employee collection
+ * 5. Find User (CEO) with that email to get managerId
+ * 6. Save expense to Expense collection
+ * 7. Trigger budget alert if needed
+ */
+exports.submitEmployeeExpense = async (req, res, next) => {
+  try {
+    const employeeId = req.employee?.id;
+
+    if (!employeeId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Employee token required'
+      });
+    }
+
+    // Check if file was uploaded
+    if (!req.file) {
+      return res.status(400).json({
+        success: false,
+        message: 'File (image or PDF) is required'
+      });
+    }
+
+    // Read file and convert to base64
+    const fileBuffer = req.file.buffer;
+    const base64String = fileBuffer.toString('base64');
+    const mimeType = req.file.mimetype || 'image/png';
+
+    // Prepare inline data for Gemini
+    const inlineData = {
+      base64: normalizeBase64String(base64String),
+      mimeType: mimeType
+    };
+
+    // Analyze receipt with Mistral AI Pixtral
+    let extracted;
+    try {
+      extracted = await analyzeReceiptWithMistral(base64String, mimeType);
+      const validation = validateGeminiExtraction(extracted);
+
+      if (!validation.ok) {
+        return res.status(400).json({
+          success: false,
+          message: validation.message || 'Invalid document analysis'
+        });
+      }
+
+      if (validation.invalidDocument) {
+        return res.status(400).json({
+          success: false,
+          message: validation.error || 'Invalid document'
+        });
+      }
+    } catch (err) {
+      return res.status(502).json({
+        success: false,
+        message: 'Failed to analyze document: ' + err.message
+      });
+    }
+
+    // Find the employee record
+    const employee = await Employee.findById(employeeId).lean();
+    if (!employee) {
+      return res.status(404).json({
+        success: false,
+        message: 'Employee record not found'
+      });
+    }
+
+    // Find the employee's manager (CEO) by email
+    if (!employee.manager_email) {
+      return res.status(400).json({
+        success: false,
+        message: 'Manager email not configured for this employee'
+      });
+    }
+
+    const managerUser = await User.findOne({ email: employee.manager_email }).lean();
+    if (!managerUser) {
+      return res.status(404).json({
+        success: false,
+        message: `Manager (CEO) with email ${employee.manager_email} not found`
+      });
+    }
+
+    const managerId = managerUser._id;
+
+    // Create expense record
+    try {
+      const expense = await Expense.create({
+        managerId: managerId,
+        employeeId: employeeId,
+        amount: extracted.amount,
+        currency: extracted.currency || 'USD',
+        vendor: extracted.vendor || 'Unknown',
+        category: extracted.category || 'Other',
+        description: extracted.description || '',
+        receiptUrl: null, // Could store file URL if using cloud storage
+        status: 'pending',
+        date: extracted.date ? new Date(extracted.date) : new Date(),
+      });
+
+      // Recalculate budget spent for the manager
+      try {
+        const updatedManager = await recalculateBudgetSpent(managerId);
+        
+        // Check if budget alert should be sent
+        if (updatedManager && updatedManager.budget) {
+          const category = extracted.category || 'Other';
+          const matchedBudget = updatedManager.budget.find(b => b.project === category);
+          
+          if (matchedBudget && matchedBudget.amount > 0) {
+            const percentage = (matchedBudget.spent / matchedBudget.amount) * 100;
+            let alertLevel = null;
+            
+            if (percentage >= 100) {
+              alertLevel = 'CRITICAL';
+            } else if (percentage >= 80) {
+              alertLevel = 'WARNING';
+            }
+
+            if (alertLevel) {
+              await sendBudgetAlertEmail(updatedManager, matchedBudget, alertLevel, category);
+            }
+          }
+        }
+      } catch (budgetErr) {
+        console.warn(`[Kash] Failed to recalculate budget for manager: ${budgetErr.message}`);
+        // Don't fail expense creation if budget update fails
+      }
+
+      return res.status(201).json({
+        success: true,
+        message: 'Expense submitted successfully',
+        data: {
+          expense: {
+            id: expense._id,
+            amount: expense.amount,
+            currency: expense.currency,
+            vendor: expense.vendor,
+            category: expense.category,
+            description: expense.description,
+            date: expense.date,
+            status: expense.status,
+          }
+        }
+      });
+    } catch (err) {
+      return res.status(500).json({
+        success: false,
+        message: 'Failed to save expense: ' + err.message
+      });
+    }
   } catch (error) {
     next(error);
   }

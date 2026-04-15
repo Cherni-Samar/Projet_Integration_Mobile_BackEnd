@@ -28,3 +28,12 @@ Thumbs.db
 # Coverage
 coverage/
 .env
+
+.wwebjs_auth/
+.wwebjs_cache/
+.linkedin_token.json
+.echo_social_media_autonomy.json
+storage/
+uploads/
+*.pdf
+*.mp3

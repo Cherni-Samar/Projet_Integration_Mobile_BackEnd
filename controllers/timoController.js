@@ -3,51 +3,59 @@ const HeraAction = require('../models/HeraAction');
 const InboxEmail = require('../models/InboxEmail');
 
 // ── A. FONCTION D'AUTOPLANIFICATION (Appelée par Hera) ──
-exports.autoPlanMeeting = async (employeeName, type) => {
-  try {
-    const plannedDate = new Date();
+// controllers/timoController.js
+
+exports.autoPlanMeeting = async (participantName, type) => {
+    let suggestedDate = new Date();
     
-    // ✅ STRATÉGIE DE DATE
-    if (type === "Interview") {
-      plannedDate.setDate(plannedDate.getDate() + 2); 
-    } else if (type === "Onboarding") {
-      plannedDate.setDate(plannedDate.getDate() + (5 - plannedDate.getDay() + 7) % 7);
-    } else {
-      plannedDate.setDate(plannedDate.getDate() + 3); 
+    // 1. DÉLAI DE PRÉVENANCE : On commence à chercher à partir de dans 2 jours
+    suggestedDate.setDate(suggestedDate.getDate() + 2);
+    suggestedDate.setHours(9, 0, 0, 0); // TOUJOURS à 09h00 du matin
+
+    let isFound = false;
+
+    while (!isFound) {
+        // 2. ÉVITER LES WEEK-ENDS
+        const day = suggestedDate.getDay();
+        if (day === 6 || day === 0) { // Samedi ou Dimanche
+            suggestedDate.setDate(suggestedDate.getDate() + 1);
+            continue; // On reteste le jour suivant
+        }
+
+        // 3. VÉRIFICATION DU CRÉNEAU UNIQUE
+        // On cherche s'il y a N'IMPORTE QUEL rendez-vous ce jour-là à 09h00
+        const conflict = await Task.findOne({ 
+            deadline: suggestedDate,
+            category: 'meeting' 
+        });
+
+        if (conflict) {
+            // DÉJÀ PRIS ? On passe DIRECTEMENT au lendemain à 09h00
+            console.log(`📅 Le créneau du ${suggestedDate.toDateString()} est complet. Timo reporte au lendemain...`);
+            suggestedDate.setDate(suggestedDate.getDate() + 1);
+            suggestedDate.setHours(9, 0, 0, 0);
+        } else {
+            isFound = true; // On a trouvé un jour ouvré libre à 09h00 !
+        }
     }
 
-    plannedDate.setHours(14, 0, 0, 0); // Toujours à 14h
-
-    const formattedDate = plannedDate.toLocaleDateString('fr-FR', {
-      weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit'
+    // 4. CRÉATION DE LA TÂCHE
+    const finalTask = await Task.create({
+        title: `${type} : ${participantName}`,
+        description: `Entretien de haute priorité planifié automatiquement par Timo. Un seul créneau par jour autorisé pour ce type d'événement.`,
+        deadline: suggestedDate,
+        status: 'todo',
+        category: 'meeting',
+        priority: 'high',
+        userId: 'current_user'
     });
 
-    // 1. Création de la tâche pour le Calendrier Flutter
-    await Task.create({
-      title: `[${type.toUpperCase()}] : ${employeeName}`,
-      description: `Planifié automatiquement par Timo IA.`,
-      deadline: plannedDate,
-      category: 'meeting',
-      userId: 'timo_agent',
-      status: 'todo'
-    });
-
-    // 2. Notification pour le Dash de Hera
-    await HeraAction.create({
-      action_type: 'planning_confirmed', // ✅ Nom sémantique corrigé
-      details: { 
-        department: "LOGISTIQUE", 
-        message: `Timo a planifié l'${type} de ${employeeName} le ${formattedDate}.`,
-        agent: "Timo" 
-      },
-      triggered_by: 'hera_auto'
-    });
-
-    return formattedDate; // On renvoie la date à Hera
-  } catch (err) {
-    console.error("Erreur Timo:", err);
-    return "Date à définir";
-  }
+    return {
+        date: suggestedDate.toLocaleString('fr-FR', { 
+            weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' 
+        }),
+        task: finalTask
+    };
 };
 
 exports.getTimoTasks = async (req, res) => {
@@ -56,7 +64,6 @@ exports.getTimoTasks = async (req, res) => {
     res.json({ success: true, tasks });
   } catch (err) { res.status(500).json({ error: err.message }); }
 };
-
 exports.getTimoInbox = async (req, res) => {
   try {
     const emails = await InboxEmail.find({ to: "timo@e-team.com" }).sort({ receivedAt: -1 });

@@ -63,6 +63,15 @@ const userSchema = new mongoose.Schema(
       default: 0
     },
 
+    // Budget Management for Kash Financial Agent
+    budget: [
+      {
+        project: { type: String, required: true },
+        amount: { type: Number, required: true, min: 0 },
+        spent: { type: Number, default: 0, min: 0 }
+      }
+    ],
+
     // Prevent double-crediting the same Stripe PaymentIntent
     processedPaymentIntents: {
       type: [String],
@@ -112,30 +121,7 @@ const userSchema = new mongoose.Schema(
     lastLoginAt: {
       type: Date,
       default: null
-    },
-
-    // --- KASH BUDGET SYSTEM ---
-    budget: {
-      type: [
-        {
-          project: {
-            type: String,
-            required: true,
-          },
-          amount: {
-            type: Number,
-            required: true,
-            min: 0,
-          },
-          spent: {
-            type: Number,
-            default: 0,
-            min: 0,
-          },
-        },
-      ],
-      default: [],
-    },
+    }
   },
   {
     timestamps: true // Crée automatiquement createdAt et updatedAt

@@ -16,6 +16,7 @@ const heraActionSchema = new mongoose.Schema({
       'promotion', 'offboarding_started', 'offboarding_completed',
       'absence_alert', 'performance_alert',
       'contract_renewal', 'contract_end',
+      'doc_request',
     ],
   },
   details:      { type: mongoose.Schema.Types.Mixed },
