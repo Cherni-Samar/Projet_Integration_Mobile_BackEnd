@@ -1,11 +1,9 @@
 const Expense = require('../models/Expense');
 const User = require('../models/User');
 const Employee = require('../models/Employee');
-const Employee = require('../models/Employee');
 const Reminder = require('../models/Reminder');
 const axios = require('axios');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
-const Groq = require('groq-sdk');
 const Groq = require('groq-sdk');
 const emailSender = require('../services/emailSender');
 
@@ -26,31 +24,14 @@ function getGroqClient() {
   }
   return groqClient;
 }
-const GEMINI_MODEL_NAME = 'gemini-1.5-flash';
-
-// Initialize Groq client at module level
-let groqClient = null;
-function getGroqClient() {
-  if (!groqClient) {
-    const apiKey = process.env.GROQ_API_KEY;
-    if (!apiKey) {
-      throw new Error('GROQ_API_KEY not configured');
-    }
-    groqClient = new Groq({ apiKey });
-  }
-  return groqClient;
-}
 
 let geminiModel;
 
 function getGeminiModel() {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error('GEMINI_API_KEY missing');
-  if (!apiKey) throw new Error('GEMINI_API_KEY missing');
 
   if (!geminiModel) {
-    // DO NOT add apiVersion here, let the latest SDK handle it
-    const genAI = new GoogleGenerativeAI(apiKey);
     // DO NOT add apiVersion here, let the latest SDK handle it
     const genAI = new GoogleGenerativeAI(apiKey);
     geminiModel = genAI.getGenerativeModel({ model: GEMINI_MODEL_NAME });
@@ -255,6 +236,19 @@ async function analyzeReceiptWithMistral(base64String, mimeType) {
     if (!parsed.ok) {
       throw new Error('Response parsing failed: ' + cleanedText);
     }
+
+    return parsed.value;
+  } catch (error) {
+    throw new Error('Mistral API error: ' + error.message);
+  }
+}
+
+/**
+ * Analyze receipt via Gemini Vision API
+ */
+async function analyzeReceiptWithGemini(inlineData) {
+  const model = getGeminiModel();
+  
   const prompt = `Tu es Kash, un expert financier. Analyse cette image de reçu. 
   Retourne UNIQUEMENT un objet JSON avec ces champs: 
   amount (nombre), currency (string), vendor (string), category (SaaS, Marketing, Travel, Office, ou Salaries), date (ISO string), description (string).
@@ -271,8 +265,8 @@ async function analyzeReceiptWithMistral(base64String, mimeType) {
     }
   ]);
 
-  const response = await result.response;
-  let text = response.text();
+  const geminiResponse = await result.response;
+  let text = geminiResponse.text();
   
   // Clean potential markdown
   text = text.replace(/```json/g, '').replace(/```/g, '').trim();
