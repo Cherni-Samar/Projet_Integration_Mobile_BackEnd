@@ -1,4 +1,4 @@
-﻿const nodemailer = require('nodemailer');
+const nodemailer = require('nodemailer');
 
 class EmailSender {
   constructor() {
@@ -22,11 +22,11 @@ class EmailSender {
         text: content,
         html: content.replace(/\n/g, '<br>'),
       });
-      
+     
       console.log('📧 Email envoyé à ' + to);
       console.log('   Message ID: ' + info.messageId);
       return { success: true, messageId: info.messageId };
-      
+     
     } catch (error) {
       console.error('❌ Erreur envoi email:', error.message);
       return { success: false, error: error.message };

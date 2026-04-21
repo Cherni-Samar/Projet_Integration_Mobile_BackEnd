@@ -1,5 +1,7 @@
-﻿const emailSender = require('./emailSender');
+const mongoose = require('mongoose');
+const emailSender = require('./emailSender');
 const echoService = require('./echoService');
+const inboxStatsService = require('./inboxStatsService');
 
 class AutoReplyManager {
   constructor() {
@@ -9,13 +11,13 @@ class AutoReplyManager {
 
   scheduleReply(email, analysis, replyText) {
     const emailId = email.id;
-    
+   
     console.log('⏰ Planification reponse auto dans ' + this.delayMinutes + ' minutes pour: ' + email.subject);
-    
+   
     const timer = setTimeout(async () => {
       await this.sendAutoReply(emailId);
     }, this.delayMinutes * 60 * 1000);
-    
+   
     this.pendingReplies.set(emailId, {
       timer,
       email,
@@ -23,7 +25,7 @@ class AutoReplyManager {
       replyText,
       scheduledAt: new Date()
     });
-    
+   
     return { scheduled: true, delayMinutes: this.delayMinutes };
   }
 
@@ -44,11 +46,11 @@ class AutoReplyManager {
       console.log('⚠️ Aucune reponse en attente pour ' + emailId);
       return false;
     }
-    
+   
     const { email, replyText } = pending;
-    
+   
     console.log('🤖 Envoi reponse automatique pour: ' + email.subject);
-    
+   
     try {
       const sendResult = await emailSender.sendEmail({
         to: email.sender,
@@ -56,16 +58,29 @@ class AutoReplyManager {
         content: replyText,
         from: 'echo@e-team.com'
       });
-      
+     
       if (sendResult.success) {
         console.log('✅ Reponse auto envoyee a ' + email.sender);
+        try {
+          if (mongoose.Types.ObjectId.isValid(emailId)) {
+            await inboxStatsService.recordReply({
+              emailId: new mongoose.Types.ObjectId(emailId),
+              replyContent: replyText,
+              sentBy: 'echo@e-team.com',
+              channel: 'smtp',
+              status: 'sent',
+            });
+          }
+        } catch (dbErr) {
+          console.error('❌ Persistance EmailReply (auto):', dbErr.message);
+        }
         this.pendingReplies.delete(emailId);
         return true;
       }
     } catch (error) {
       console.error('❌ Erreur envoi auto:', error.message);
     }
-    
+   
     return false;
   }
 

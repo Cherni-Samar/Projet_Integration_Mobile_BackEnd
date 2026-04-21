@@ -60,8 +60,29 @@ const userSchema = new mongoose.Schema(
 
     energyBalance: {
       type: Number,
-      default: 0
+      default: 0,
+      min: 0
     },
+
+    totalEnergyPurchased: {
+      type: Number,
+      default: 0,
+      min: 0
+    },
+
+    lastEnergyPurchase: {
+      type: Date,
+      default: null
+    },
+
+    // Budget Management for Kash Financial Agent
+    budget: [
+      {
+        project: { type: String, required: true },
+        amount: { type: Number, required: true, min: 0 },
+        spent: { type: Number, default: 0, min: 0 }
+      }
+    ],
 
     // Prevent double-crediting the same Stripe PaymentIntent
     processedPaymentIntents: {

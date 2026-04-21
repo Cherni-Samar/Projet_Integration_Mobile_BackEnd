@@ -1,63 +1,37 @@
-﻿const { ChatGroq } = require("@langchain/groq");
-const { PromptTemplate } = require("@langchain/core/prompts");
-const { StructuredOutputParser } = require("@langchain/core/output_parsers");
-const { RunnableSequence } = require("@langchain/core/runnables");
+const nodemailer = require('nodemailer');
 
-class GroqAgent {
+class EmailSender {
   constructor() {
-    this.llm = new ChatGroq({
-      apiKey: process.env.GROQ_API_KEY,
-      model: "llama-3.3-70b-versatile",  // Modèle actif et performant
-      temperature: 0.3,
+    this.transporter = nodemailer.createTransport({
+      host: process.env.EMAIL_HOST || 'smtp.gmail.com',
+      port: process.env.EMAIL_PORT || 587,
+      secure: false,
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS,
+      },
     });
-    
-    this.outputParser = StructuredOutputParser.fromNamesAndDescriptions({
-      isSpam: "boolean - true si spam, false sinon",
-      confidence: "nombre entre 0 et 1",
-      category: "string - spam, phishing, promotion, legit",
-      reason: "string - explication courte en français"
-    });
-    
-    this.prompt = PromptTemplate.fromTemplate(
-      "Tu es un expert en analyse de messages. Détermine si le message est du spam.\n\n" +
-      "Message: {message}\n" +
-      "Contexte: {context}\n\n" +
-      "{format_instructions}\n\n" +
-      "Analyse intelligemment, ne te base pas sur des mots-clés simples."
-    );
   }
-  
-  async analyze(message, context = {}) {
+
+  async sendEmail({ to, subject, content, from = 'echo@e-team.com' }) {
     try {
-      console.log('🤖 Groq analyse:', message.substring(0, 50));
-      
-      const chain = RunnableSequence.from([
-        this.prompt,
-        this.llm,
-        this.outputParser
-      ]);
-      
-      const result = await chain.invoke({
-        message: message,
-        context: JSON.stringify(context),
-        format_instructions: this.outputParser.getFormatInstructions()
+      const info = await this.transporter.sendMail({
+        from: '"Agent Echo" <' + from + '>',
+        to: to,
+        subject: subject,
+        text: content,
+        html: content.replace(/\n/g, '<br>'),
       });
-      
-      return {
-        success: true,
-        ...result,
-        timestamp: new Date().toISOString()
-      };
+     
+      console.log('📧 Email envoyé à ' + to);
+      console.log('   Message ID: ' + info.messageId);
+      return { success: true, messageId: info.messageId };
+     
     } catch (error) {
-      console.error('Erreur Groq:', error.message);
-      return {
-        success: false,
-        isSpam: false,
-        confidence: 0,
-        error: error.message
-      };
+      console.error('❌ Erreur envoi email:', error.message);
+      return { success: false, error: error.message };
     }
   }
 }
 
-module.exports = new GroqAgent();
+module.exports = new EmailSender();

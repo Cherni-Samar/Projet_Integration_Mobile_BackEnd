@@ -1,205 +1,44 @@
+// =============================================================
+//  ROUTES - Agent Management & Energy System
+// =============================================================
+
 const express = require('express');
 const router = express.Router();
-const hrAgent = require('../agents/hrAgent');
-const echoAgent = require('../agents/Echoagent');
-const dexoAgent = require('../agents/DexoAgent');
-const User = require('../models/User');
+const agentController = require('../controllers/agentController');
+
+// Authentication middleware
 const authMiddleware = require('../middleware/authMiddleware');
 
-// POST /api/agents/hire → Add an agent to the user's activeAgents (within plan limit)
-router.post('/hire', authMiddleware, async (req, res, next) => {
-  try {
-    const { agentId } = req.body;
-    if (!agentId) {
-      return res.status(400).json({
-        success: false,
-        message: 'agentId requis',
-      });
-    }
+// ─────────────────────────────────────────────
+// AGENT MANAGEMENT ROUTES
+// ─────────────────────────────────────────────
 
-    const user = await User.findById(req.user.id).select('activeAgents maxAgentsAllowed');
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: 'Utilisateur non trouvé',
-      });
-    }
+// Get all agents with energy status
+router.get('/', agentController.getAllAgents);
 
-    const activeAgents = Array.isArray(user.activeAgents) ? user.activeAgents : [];
-    const maxAgentsAllowed = typeof user.maxAgentsAllowed === 'number' ? user.maxAgentsAllowed : 1;
+// Get single agent
+router.get('/:id', agentController.getAgent);
 
-    // Idempotent: hiring an already-active agent is a no-op
-    if (!activeAgents.includes(agentId)) {
-      if (activeAgents.length >= maxAgentsAllowed) {
-        const err = new Error('Limite d\'agents atteinte pour votre plan.');
-        err.statusCode = 403;
-        throw err;
-      }
-      user.activeAgents = [...activeAgents, agentId];
-      await user.save();
-    }
+// Update agent energy
+router.put('/:id/energy', agentController.updateAgentEnergy);
 
-    return res.status(200).json({
-      success: true,
-      activeAgents: user.activeAgents,
-      maxAgentsAllowed: user.maxAgentsAllowed,
-    });
-  } catch (err) {
-    return next(err);
-  }
-});
+// Distribute energy among multiple agents
+router.post('/distribute-energy', agentController.distributeEnergy);
 
-// GET /api/agents/hr → Hello World
-router.get('/hr', async (req, res) => {
-  try {
-    const result = await hrAgent.process('hello', {}, {
-      username: req.query.username,
-    });
-    res.json(result);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+// Initialize default agents (setup)
+router.post('/initialize', agentController.initializeAgents);
 
-// POST /api/agents/hr → intent générique
-router.post('/hr', async (req, res) => {
-  try {
-    const { intent, payload, context } = req.body;
-    const result = await hrAgent.process(intent, payload, context);
-    res.json(result);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+// ─────────────────────────────────────────────
+// ENERGY PURCHASE & MANAGEMENT ROUTES
+// ─────────────────────────────────────────────
 
-// GET /api/agents/echo → Echo agent status
-router.get('/echo', async (req, res) => {
-  try {
-    res.json({
-      success: true,
-      agent: 'echo',
-      status: 'active',
-      capabilities: ['message_analysis', 'priority_detection', 'spam_filtering', 'categorization'],
-      version: '1.0.0'
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
+// Buy energy for user (requires authentication)
+router.post('/buy-energy', authMiddleware, agentController.buyEnergy);
 
-// POST /api/agents/echo → Analyze message with Echo agent
-router.post('/echo', authMiddleware, async (req, res) => {
-  try {
-    const { message, sender } = req.body;
-    
-    if (!message) {
-      return res.status(400).json({
-        success: false,
-        message: 'Message is required'
-      });
-    }
+// Get user energy balance (requires authentication)
+router.get('/energy/balance', authMiddleware, agentController.getEnergyBalance);
 
-    // Check if user has echo agent activated
-    const user = await User.findById(req.user.id).select('activeAgents');
-    if (!user || !user.activeAgents.includes('echo')) {
-      return res.status(403).json({
-        success: false,
-        message: 'Echo agent not activated for this user'
-      });
-    }
-
-    const result = await echoAgent.analyze(message, sender || req.user.email);
-    
-    res.json({
-      success: true,
-      agent: 'echo',
-      analysis: result,
-      timestamp: new Date().toISOString()
-    });
-  } catch (err) {
-    res.status(500).json({ 
-      success: false,
-      error: err.message 
-    });
-  }
-});
-
-// GET /api/agents/dexo → Dexo agent status
-router.get('/dexo', async (req, res) => {
-  try {
-    res.json({
-      success: true,
-      agent: 'dexo',
-      status: 'active',
-      capabilities: [
-        'document_classification',
-        'intelligent_search', 
-        'security_monitoring',
-        'duplicate_detection',
-        'version_management',
-        'expiration_tracking',
-        'document_generation',
-        'access_control'
-      ],
-      version: '1.0.0',
-      integrations: ['langchain', 'n8n', 'groq'],
-      mission: 'Gérer et sécuriser les documents intelligemment'
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-// POST /api/agents/dexo → Process document with Dexo agent
-router.post('/dexo', authMiddleware, async (req, res) => {
-  try {
-    const { filename, content, action = 'classify', metadata = {} } = req.body;
-    
-    if (!filename || !content) {
-      return res.status(400).json({
-        success: false,
-        message: 'Filename and content are required'
-      });
-    }
-
-    // Check if user has dexo agent activated
-    const user = await User.findById(req.user.id).select('activeAgents');
-    if (!user || !user.activeAgents.includes('dexo')) {
-      return res.status(403).json({
-        success: false,
-        message: 'Dexo agent not activated for this user'
-      });
-    }
-
-    let result;
-    
-    switch (action) {
-      case 'classify':
-        result = await dexoAgent.classifyDocument(filename, content, metadata);
-        break;
-      case 'process':
-        result = await dexoAgent.processDocument(filename, content, req.user.id, metadata);
-        break;
-      case 'detect_duplicates':
-        result = await dexoAgent.detectDuplicates(filename, content, metadata);
-        break;
-      default:
-        result = await dexoAgent.classifyDocument(filename, content, metadata);
-    }
-    
-    res.json({
-      success: true,
-      agent: 'dexo',
-      action: action,
-      result: result,
-      timestamp: new Date().toISOString()
-    });
-  } catch (err) {
-    res.status(500).json({ 
-      success: false,
-      error: err.message 
-    });
-  }
-});
+// Use user energy to power agents (requires authentication)
+router.post('/power-agents', authMiddleware, agentController.powerAgents);
 
 module.exports = router;

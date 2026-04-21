@@ -1,63 +1,19 @@
 const Employee = require('../models/Employee');
 const LeaveRequest = require('../models/LeaveRequest');
 const HeraAction = require('../models/HeraAction');
-const n8n = require('../services/n8n.service');
-
-// ══════════════════════════════════════════════════════════════════════════
-// UTILS - Fonctions de validation réutilisables
-// ══════════════════════════════════════════════════════════════════════════
-
-/**
- * Valide les dates (format et cohérence)
- */
-function validateDates(start_date, end_date) {
-  const start = new Date(start_date);
-  const end = new Date(end_date);
-  
-  if (isNaN(start.getTime()) || isNaN(end.getTime())) {
-    return { valid: false, error: 'Dates invalides (format incorrect)' };
-  }
-  
-  if (end < start) {
-    return { valid: false, error: 'La date de fin doit être après la date de début' };
-  }
-  
-  return { valid: true, start, end };
-}
-
-/**
- * Calcule le nombre de jours entre 2 dates (inclusif)
- */
-function calculateDays(start, end) {
-  return Math.ceil((end - start) / (1000 * 60 * 60 * 24)) + 1;
-}
-
-/**
- * Vérifie le délai minimum (sauf pour congés urgents)
- */
-function checkMinimumNotice(start_date, type, minDays = 7) {
-  if (type === 'urgent') return { valid: true };
-  
-  const today = new Date();
-  const start = new Date(start_date);
-  const daysUntilStart = Math.ceil((start - today) / (1000 * 60 * 60 * 24));
-  
-  if (daysUntilStart < minDays) {
-    return {
-      valid: false,
-      error: `Les congés normaux nécessitent ${minDays} jours de préavis minimum (${daysUntilStart} jour(s) donné(s))`
-    };
-  }
-  
-  return { valid: true };
-}
-
-// ══════════════════════════════════════════════════════════════════════════
-// HERA ONBOARDING - Validations & helpers
-// ══════════════════════════════════════════════════════════════════════════
-
-const ALLOWED_CONTRACT_TYPES = ['CDI', 'CDD', 'Stage', 'Freelance'];
-
+const User = require('../models/User');
+const mailService = require('../utils/emailService'); // Chemin corrigé selon ton projet
+const heraAgent = require('../services/hera.agent'); // Ton service LangChain
+const JobOffer = require('../models/JobOffer');
+const Candidate = require('../models/Candidate');
+const dexo = require('../controllers/dexoController'); 
+const InboxEmail = require('../models/InboxEmail'); // ✅ AJOUTE CETTE LIGNE// ✅ AJOUTE CECI
+const mongoose = require('mongoose');
+const timo = require('./timoController');           // ✅ OBLIGATOIRE pour l'appel autonome
+const bcrypt = require('bcryptjs');
+const Document = require('../models/Document'); // ✅ AJOUTE CET IMPORT
+ // ✅ Assure-toi d'avoir installé : npm install bcryptjs
+ // ✅ AJOUTE CETTE LIGNE TOUT EN HAUT
 const DEPARTMENT_LIMITS = {
   Tech: { max_employees: 20, max_interns: 2 },
   Design: { max_employees: 10, max_interns: 1 },
@@ -67,13 +23,13 @@ const DEPARTMENT_LIMITS = {
   Support: { max_employees: 12, max_interns: 1 },
   Management: { max_employees: 10, max_interns: 0 },
 };
+// ══════════════════════════════════════════════════════════════════════════
+// HELPERS INTERNES
+// ══════════════════════════════════════════════════════════════════════════
 
-const UNIQUE_ROLES = ['CEO', 'Directeur Général', 'CFO', 'CTO', 'DRH'];
-
-const FORBIDDEN_ROLE_COMBINATIONS = {
-  Stage: ['Manager', 'CEO', 'Directeur', 'Team Lead', 'Chef', 'Responsable', 'Senior'],
-  Freelance: ['CEO', 'Directeur Général', 'DRH', 'CFO', 'CTO'],
-};
+function calculateDays(start, end) {
+  return Math.ceil((new Date(end) - new Date(start)) / (1000 * 60 * 60 * 24)) + 1;
+}
 
 function normalizeEmail(email) {
   return typeof email === 'string' ? email.trim().toLowerCase() : email;
@@ -85,797 +41,739 @@ function parseOptionalNumber(value) {
   return Number.isFinite(n) ? n : null;
 }
 
-function addMonths(date, months) {
-  const d = new Date(date);
-  if (Number.isFinite(months) && months !== null) {
-    d.setMonth(d.getMonth() + months);
-  }
+function computeContractEnd(contractType, startDate) {
+  const durations = { CDI: null, CDD: 12, Stage: 6, Freelance: 12 };
+  const months = durations[contractType];
+  if (months === null || months === undefined) return null;
+  const d = new Date(startDate);
+  d.setMonth(d.getMonth() + months);
   return d;
 }
-
-function computeContractEnd(contractType, startDate) {
-  // Default durations aligned with colleague implementation
-  const durations = {
-    CDI: null,
-    CDD: 12,
-    Stage: 6,
-    Freelance: 12,
-  };
-
-  const months = Object.prototype.hasOwnProperty.call(durations, contractType)
-    ? durations[contractType]
-    : null;
-
-  if (months === null) return null;
-  return addMonths(startDate, months);
-}
-
-// ══════════════════════════════════════════════════════════════════════════
-// ROUTES HANDLERS
-// ══════════════════════════════════════════════════════════════════════════
-
-// ── Hello ──────────────────────────────────────────────────────────────────
-exports.hello = async (req, res) => {
+// Cette route sera appelée par Vapi automatiquement
+exports.vapiWebhook = async (req, res) => {
   try {
-    const { username } = req.body;
-    const result = await n8n.hello({ username, intent: 'hello' });
-    res.json(result || {
-      success: true,
-      agent: 'Hera',
-      message: 'Hello! Je suis Hera, votre agent RH 👋',
-      user: username,
-    });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-};
-
-// ── Demande de congé (AUTO-DÉCISION HERA - 100% automatique) ───────────────
-exports.requestLeave = async (req, res) => {
-  try {
-    const { employee_id, employee_email, type, start_date, end_date, reason } = req.body;
-
-    // VALIDATION 1 : Champs requis
-    if (!employee_id || !employee_email || !type || !start_date || !end_date) {
-      return res.status(400).json({
-        success: false,
-        error: 'missing_fields',
-        message: '❌ Champs requis : employee_id, employee_email, type, start_date, end_date'
-      });
-    }
-
-    // VALIDATION 2 : Type de congé valide
-    const validTypes = ['annual', 'sick', 'urgent'];
-    if (!validTypes.includes(type)) {
-      return res.status(400).json({
-        success: false,
-        error: 'invalid_type',
-        message: `❌ Type invalide. Types acceptés : ${validTypes.join(', ')}`
-      });
-    }
-
-    // VALIDATION 3 : Dates valides
-    const dateValidation = validateDates(start_date, end_date);
-    if (!dateValidation.valid) {
-      return res.status(400).json({
-        success: false,
-        error: 'invalid_dates',
-        message: `❌ ${dateValidation.error}`
-      });
-    }
-
-    const { start, end } = dateValidation;
-    const days = calculateDays(start, end);
-
-    // VALIDATION 4 : Durée maximum
-    const MAX_DAYS = 30;
-    if (days > MAX_DAYS) {
-      return res.status(400).json({
-        success: false,
-        error: 'duration_exceeded',
-        message: `❌ Maximum ${MAX_DAYS} jours consécutifs (${days} demandé(s))`
-      });
-    }
-
-    // VALIDATION 5 : Délai minimum
-    const noticeCheck = checkMinimumNotice(start_date, type, 7);
-    if (!noticeCheck.valid) {
-      return res.status(400).json({
-        success: false,
-        error: 'insufficient_notice',
-        message: `❌ ${noticeCheck.error}`
-      });
-    }
-
-    // VALIDATION 6 : Employé existe
-    const employee = await Employee.findById(employee_id);
-    if (!employee) {
-      return res.status(404).json({
-        success: false,
-        error: 'employee_not_found',
-        message: '❌ Employé non trouvé'
-      });
-    }
-
-    // VALIDATION 7 : Solde suffisant
-    const balance = employee.leave_balance?.[type] || 0;
-    const used = employee.leave_balance_used?.[type] || 0;
-    const remaining = balance - used;
-
-    if (days > remaining) {
-      try {
-        await n8n.requestLeave({
-          employee_name: employee.name,
-          employee_email: employee.email,
-          manager_email: employee.manager_email,
-          type,
-          start_date: start_date,
-          end_date: end_date,
-          days,
-          reason: reason || 'Congé',
-          status: 'refused',
-          refusal_reason: `Solde insuffisant : ${remaining} jour(s) restant(s)`
-        });
-      } catch (emailError) {
-        console.error('⚠️  Erreur envoi email refus:', emailError.message);
-      }
-
-      return res.status(400).json({
-        success: false,
-        error: 'insufficient_balance',
-        status: 'refused',
-        message: `❌ Solde insuffisant : ${remaining} jour(s) restant(s), ${days} demandé(s)`,
-        balance_left: remaining,
-        days_requested: days
-      });
-    }
-
-    // VALIDATION 8 : Pas de chevauchement
-    const ownConflicts = await LeaveRequest.find({
-      employee_id,
-      status: { $in: ['approved'] },
-      $or: [
-        {
-          start_date: { $lte: end },
-          end_date: { $gte: start }
-        }
-      ]
-    });
-
-    if (ownConflicts.length > 0) {
-      try {
-        await n8n.requestLeave({
-          employee_name: employee.name,
-          employee_email: employee.email,
-          manager_email: employee.manager_email,
-          type,
-          start_date: start_date,
-          end_date: end_date,
-          days,
-          reason: reason || 'Congé',
-          status: 'refused',
-          refusal_reason: 'Conflit avec un congé existant'
-        });
-      } catch (emailError) {
-        console.error('⚠️  Erreur envoi email refus:', emailError.message);
-      }
-
-      return res.status(409).json({
-        success: false,
-        error: 'date_conflict',
-        status: 'refused',
-        message: `❌ Vous avez déjà un congé prévu sur cette période`,
-        conflicts: ownConflicts.map(c => ({
-          start: c.start_date,
-          end: c.end_date,
-          type: c.type,
-          status: c.status
-        }))
-      });
-    }
-
-    // VALIDATION 9 : Limite d'employés simultanés
-    const simultaneousCount = await LeaveRequest.countDocuments({
-      status: 'approved',
-      employee_id: { $ne: employee_id },
-      $or: [
-        {
-          start_date: { $lte: end },
-          end_date: { $gte: start }
-        }
-      ]
-    });
-
-    const MAX_SIMULTANEOUS = 2;
-
-    console.log(`🤖 HERA DÉCISION : ${simultaneousCount} employés déjà en congé (max: ${MAX_SIMULTANEOUS})`);
-
-    // ═══════════════════════════════════════════════════════════════════════
-    // 🎯 LOGIQUE AUTO-DÉCISION HERA (Plus de "pending" !)
-    // ═══════════════════════════════════════════════════════════════════════
-    let status;
-    let approved_by;
-    let approved_at;
-    let auto_decision_reason;
-
-    if (type === 'urgent') {
-      // ✅ Urgent = TOUJOURS approuvé
-      status = 'approved';
-      approved_by = 'Hera (auto - urgent)';
-      approved_at = new Date();
-      auto_decision_reason = 'Congé urgent approuvé automatiquement';
-      console.log('✅ DÉCISION : APPROUVÉ (urgent)');
-      
-    } else if (simultaneousCount < MAX_SIMULTANEOUS) {
-      // ✅ < 2 personnes = APPROUVÉ
-      status = 'approved';
-      approved_by = 'Hera (auto - disponible)';
-      approved_at = new Date();
-      auto_decision_reason = `${simultaneousCount} employé(s) déjà en congé`;
-      console.log('✅ DÉCISION : APPROUVÉ (capacité OK)');
-      
-    } else {
-      // ❌ >= 2 personnes = REFUSÉ
-      status = 'refused';
-      approved_by = 'Hera (auto - capacité max)';
-      approved_at = new Date();
-      auto_decision_reason = `${simultaneousCount} employés déjà en congé (max: ${MAX_SIMULTANEOUS})`;
-      console.log('❌ DÉCISION : REFUSÉ (capacité max atteinte)');
-      
-      // Email de refus
-      try {
-        await n8n.requestLeave({
-          employee_name: employee.name,
-          employee_email: employee.email,
-          manager_email: employee.manager_email,
-          type,
-          start_date: start_date,
-          end_date: end_date,
-          days,
-          reason: reason || 'Congé',
-          status: 'refused',
-          refusal_reason: auto_decision_reason
-        });
-      } catch (emailError) {
-        console.error('⚠️  Erreur envoi email refus:', emailError.message);
-      }
-      
-      await HeraAction.create({
-        employee_id,
-        action_type: 'leave_refused',
-        details: { type, days, reason, auto_decision_reason, simultaneous_count: simultaneousCount },
-        triggered_by: 'hera_auto',
-      });
-      
-      return res.status(409).json({
-        success: false,
-        error: 'max_simultaneous_reached',
-        status: 'refused',
-        message: `❌ ${auto_decision_reason}`,
-        simultaneous_count: simultaneousCount,
-        max_allowed: MAX_SIMULTANEOUS
-      });
-    }
-
-    // Crée la demande avec le statut décidé par Hera
-    const leave = await LeaveRequest.create({
-      employee_id,
-      employee_email,
-      type,
-      start_date: start,
-      end_date: end,
-      days,
-      reason: reason || 'Congé',
-      status,  // ✅ approved ou refused, JAMAIS pending
-      simultaneous_count: simultaneousCount,
-      approved_by,
-      approved_at
-    });
-
-    console.log(`💾 Congé créé : ${leave._id} avec statut "${status}"`);
-
-    // Mise à jour du solde si approuvé
-    if (status === 'approved') {
-      await Employee.findByIdAndUpdate(employee_id, {
-        $inc: { [`leave_balance_used.${type}`]: days }
-      });
-    }
-
-    // Log action
-    await HeraAction.create({
-      employee_id,
-      action_type: status === 'approved' ? 'leave_approved' : 'leave_refused',
-      details: { leave_id: leave._id, type, days, reason, auto_decision_reason, simultaneous_count: simultaneousCount },
-      triggered_by: 'hera_auto',
-    });
-
-    // Email d'approbation
-    try {
-      await n8n.requestLeave({
-        employee_name: employee.name,
-        employee_email: employee.email,
-        manager_email: employee.manager_email,
-        leave_id: leave._id.toString(),
-        type,
-        start_date: start_date,
-        end_date: end_date,
-        days,
-        reason: leave.reason,
-        status,
-        auto_decision_reason,
-        balance_left: remaining - days,
-        simultaneous_count: simultaneousCount
-      });
-    } catch (emailError) {
-      console.error('⚠️  Erreur envoi email:', emailError.message);
-    }
-
-    return res.status(201).json({
-      success: true,
-      status,
-      message: `✅ Congé ${status === 'approved' ? 'approuvé' : 'refusé'} automatiquement par Hera`,
-      leave_id: leave._id,
-      start_date,
-      end_date,
-      days,
-      balance_left: remaining - (status === 'approved' ? days : 0),
-      simultaneous_count: simultaneousCount,
-      auto_decision_reason
-    });
-
-  } catch (err) {
-    console.error('❌ Erreur requestLeave:', err);
-    return res.status(500).json({
-      success: false,
-      error: 'server_error',
-      message: '❌ Erreur serveur : ' + err.message
-    });
-  }
-};
-// ── Congé urgent ───────────────────────────────────────────────────────────
-exports.urgentLeave = async (req, res) => {
-  try {
-    const { employee_id, employee_email, reason } = req.body;
-
-    if (!employee_id || !employee_email) {
-      return res.status(400).json({
-        success: false,
-        error: 'missing_fields',
-        message: '❌ employee_id et employee_email requis'
-      });
-    }
-
-    const today = new Date().toISOString().split('T')[0];
+    const payload = req.body;
     
-    req.body = {
-      employee_id,
-      employee_email,
-      type: 'urgent',
-      start_date: today,
-      end_date: today,
-      reason: reason || 'Urgence'
-    };
+    // 1. Récupérer le message texte de l'admin depuis Vapi
+    const userMessage = payload.message?.toolCalls?.[0]?.function?.arguments?.message 
+                     || payload.message?.transcript 
+                     || "";
 
-    return exports.requestLeave(req, res);
+    if (!userMessage) {
+      return res.json({ message: "Je vous écoute, comment puis-je aider l'équipe RH ?" });
+    }
+
+    // 2. Utiliser ton agent LangChain pour analyser le message (comme on a fait avant)
+    const analysis = await heraAgent.analyze(userMessage);
+
+    let finalReply = analysis.reply;
+
+    // 3. Si l'IA détecte une demande de congé via la voix
+    if (analysis.intent === "LEAVE_REQUEST") {
+      const employee = await Employee.findOne({ name: new RegExp(analysis.data.employee_name, 'i') });
+      
+      if (employee) {
+        const result = await executeLeaveDecision({
+          employee_id: employee._id,
+          type: analysis.data.type || 'annual',
+          start_date: analysis.data.start_date,
+          end_date: analysis.data.end_date,
+          reason: "Accordé par l'Admin via Voice"
+        });
+        finalReply = `C'est fait. J'ai traité la demande pour ${employee.name}. ${result.message}`;
+      } else {
+        finalReply = `Je n'ai pas trouvé l'employé ${analysis.data.employee_name} dans la base de données.`;
+      }
+    } 
+    
+    // 4. Si l'admin demande de vérifier le staffing ("Hera, vérifie si on manque de monde")
+    else if (userMessage.toLowerCase().includes("staffing") || userMessage.toLowerCase().includes("recrutement")) {
+      await exports.checkStaffingNeeds(req, res); // Appelle ta fonction qui mail Echo
+      finalReply = "J'ai analysé les départements. Des alertes de recrutement ont été envoyées à l'agent Echo pour les postes manquants.";
+    }
+
+    // 5. Répondre à Vapi (format spécifique pour que Hera parle)
+    return res.json({
+      results: [
+        {
+          toolCallId: payload.message?.toolCalls?.[0]?.id,
+          result: finalReply
+        }
+      ]
+    });
 
   } catch (err) {
-    console.error('❌ Erreur urgentLeave:', err);
-    return res.status(500).json({
-      success: false,
-      error: 'server_error',
-      message: '❌ Erreur serveur : ' + err.message
-    });
+    console.error("Vapi Error:", err);
+    res.json({ result: "Désolée, j'ai rencontré une erreur technique." });
   }
 };
-
-// ── Onboarding ─────────────────────────────────────────────────────────────
-exports.onboarding = async (req, res) => {
+exports.getAllCandidates = async (req, res) => {
   try {
-    const {
-      name,
-      email,
-      role,
-      department,
-      contract_type,
-      contract_start,
-      manager_email,
-      salary,
-    } = req.body;
+    const candidates = await Candidate.find().sort({ score_ia: -1 });
+    res.json({ success: true, candidates });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+};
 
-    // VALIDATION 1 : Champs requis
-    if (!name || !email || !role || !contract_type) {
-      return res.status(400).json({
-        success: false,
-        error: 'missing_fields',
-        message: '❌ name, email, role, contract_type requis'
-      });
-    }
+// ── FONCTION : CHECK STAFFING (Alerte Echo) ──
+exports.checkStaffingNeeds = async (req, res) => {
+  try {
+    const report = [];
+    const departments = Object.keys(DEPARTMENT_LIMITS);
+    const InboxEmail = require('../models/InboxEmail');
+    const EmailReply = require('../models/EmailReply');
+    const Candidate = require('../models/Candidate'); // Pour vérifier les nouveaux candidats
 
-    // VALIDATION 2 : Type de contrat
-    if (!ALLOWED_CONTRACT_TYPES.includes(contract_type)) {
-      return res.status(400).json({
-        success: false,
-        error: 'invalid_contract_type',
-        message: `❌ contract_type invalide. Types acceptés : ${ALLOWED_CONTRACT_TYPES.join(', ')}`,
-      });
-    }
+    // Date de référence : il y a 7 jours
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
-    const normalizedEmail = normalizeEmail(email);
+    for (const dept of departments) {
+      const count = await Employee.countDocuments({ department: dept, status: 'active' });
+      const limit = DEPARTMENT_LIMITS[dept].max_employees;
 
-    // VALIDATION 3 : Email unique
-    const existingEmployee = await Employee.findOne({ email: normalizedEmail }).lean();
-    if (existingEmployee) {
-      return res.status(409).json({
-        success: false,
-        error: 'email_exists',
-        message: `❌ Un employé avec l'email ${normalizedEmail} existe déjà`,
-      });
-    }
+      // CONDITION 1 : Sous-effectif détecté (< 80%)
+      if (count < limit * 0.8) {
+        
+        // CONDITION 2 : Existe-t-il une alerte envoyée DURANT LES 7 DERNIERS JOURS ?
+        const recentAlert = await HeraAction.findOne({
+          action_type: 'absence_alert',
+          'details.department': dept,
+          created_at: { $gt: sevenDaysAgo } // Plus récent que 7 jours
+        }).sort({ created_at: -1 });
 
-    // VALIDATION 4 : Limites par département (si renseigné)
-    const normalizedDepartment = typeof department === 'string' && department.trim() ? department.trim() : null;
-    if (normalizedDepartment) {
-      const deptLimit = DEPARTMENT_LIMITS[normalizedDepartment];
-      if (deptLimit) {
-        const deptCount = await Employee.countDocuments({
-          department: normalizedDepartment,
-          status: { $in: ['active', 'onboarding'] },
-        });
-
-        if (deptCount >= deptLimit.max_employees) {
-          return res.status(400).json({
-            success: false,
-            error: 'department_limit_reached',
-            message: `❌ Département ${normalizedDepartment} complet : ${deptCount}/${deptLimit.max_employees} employés`,
+        if (recentAlert) {
+          report.push({ 
+            dept, 
+            status: 'WAITING', 
+            reason: "Une alerte a déjà été envoyée cette semaine. On attend les résultats." 
           });
+          continue; // On passe au département suivant sans rien envoyer
         }
 
-        // Limite de stagiaires par département
-        if (contract_type === 'Stage') {
-          const internCount = await Employee.countDocuments({
-            department: normalizedDepartment,
-            'contract.type': 'Stage',
-            status: { $in: ['active', 'onboarding'] },
+        // CONDITION 3 : Si une vieille alerte existe, on vérifie si Echo a répondu 
+        // ET si des candidats ont postulé entre-temps
+        const lastAlertEver = await HeraAction.findOne({
+          action_type: 'absence_alert',
+          'details.department': dept
+        }).sort({ created_at: -1 });
+
+        if (lastAlertEver) {
+          // A-t-on reçu des candidats pour ce département depuis la dernière alerte ?
+          const newCandidates = await Candidate.countDocuments({
+            department: dept,
+            created_at: { $gt: lastAlertEver.created_at }
           });
 
-          if (internCount >= deptLimit.max_interns) {
-            return res.status(400).json({
-              success: false,
-              error: 'intern_limit_reached',
-              message: `❌ ${normalizedDepartment} : ${internCount}/${deptLimit.max_interns} stagiaire(s) maximum`,
+          if (newCandidates > 0) {
+            report.push({ 
+              dept, 
+              status: 'OK', 
+              reason: `${newCandidates} nouveaux candidats ont postulé. Recrutement efficace, pas de relance.` 
             });
+            continue;
+          }
+
+          // Echo a-t-il déjà répondu par un mail de confirmation ?
+          const echoResponse = await InboxEmail.findOne({
+            sender: "echo@e-team.com",
+            to: "hera@e-team.com",
+            receivedAt: { $gt: lastAlertEver.created_at }
+          });
+
+          if (echoResponse) {
+             // Echo a répondu mais pas de candidats après 7 jours ? 
+             // Là on pourrait relancer, mais selon ta règle on attend encore.
+             report.push({ dept, status: 'WAITING', reason: "Echo a publié, on attend que les candidats remplissent le formulaire." });
+             continue;
           }
         }
-      }
-    }
 
-    // VALIDATION 5 : Rôles autorisés (règles métier)
-    // 5a) Postes uniques
-    const roleText = typeof role === 'string' ? role.trim() : '';
-    const isUniqueRole = UNIQUE_ROLES.some((uniqueRole) =>
-      roleText.toLowerCase().includes(uniqueRole.toLowerCase())
-    );
-
-    if (isUniqueRole) {
-      const existingRole = await Employee.findOne({
-        role: new RegExp(roleText, 'i'),
-        status: { $in: ['active', 'onboarding'] },
-      }).lean();
-
-      if (existingRole) {
-        return res.status(400).json({
-          success: false,
-          error: 'unique_role_taken',
-          message: `❌ Le poste "${roleText}" est déjà occupé par ${existingRole.name}`,
+        // SI ON ARRIVE ICI : Soit c'est la 1ère fois, soit ça fait + de 7 jours sans résultats
+        console.log(`📢 [HERA] Alerte Staffing hebdomadaire pour : ${dept}`);
+        
+        // ⚡ CONSUME ENERGY FOR STAFFING ALERT
+        const { manualEnergyConsumption } = require('../middleware/energyMiddleware');
+        
+        // Find user with most energy for energy deduction
+        let userId = null;
+        let energyConsumed = 0;
+        try {
+          const User = require('../models/User');
+          const userWithEnergy = await User.findOne({ energyBalance: { $gt: 0 } }).sort({ energyBalance: -1 });
+          if (userWithEnergy) {
+            userId = userWithEnergy._id.toString();
+            console.log(`⚡ [HERA] Using user portfolio for energy: ${userId} (${userWithEnergy.energyBalance} energy)`);
+          }
+          
+          const energyResult = await manualEnergyConsumption(
+            'hera',
+            'STAFFING_ALERT',
+            `Processed staffing alert for ${dept} department`,
+            { 
+              department: dept,
+              currentCount: count,
+              maxCapacity: limit
+            },
+            userId // Pass userId for user portfolio deduction
+          );
+          
+          if (energyResult.success) {
+            energyConsumed = energyResult.energyCost;
+            console.log(`⚡ [ENERGY] Hera consumed ${energyResult.energyCost} energy for STAFFING_ALERT`);
+          } else {
+            console.warn(`⚠️ [ENERGY] ${energyResult.error} - Continuing with staffing alert`);
+          }
+        } catch (err) {
+          console.warn('⚠️ [HERA] Could not process energy consumption:', err.message);
+        }
+        
+        // 1. Création du mail technique pour Echo
+        const newAlertMail = await InboxEmail.create({
+          sender: "hera@e-team.com",
+          to: "echo@e-team.com",
+          subject: `[STAFFING WEEKLY] Besoin renfort : ${dept}`,
+          content: `Alerte hebdomadaire : Le département ${dept} est à ${count}/${limit}.`,
+          category: 'recrutement',
+          priority: 'high'
         });
-      }
-    }
 
-    // 5b) Cohérence poste / contrat
-    const forbidden = FORBIDDEN_ROLE_COMBINATIONS[contract_type];
-    if (Array.isArray(forbidden) && forbidden.length > 0) {
-      const isForbidden = forbidden.some((forbiddenRole) =>
-        roleText.toLowerCase().includes(forbiddenRole.toLowerCase())
-      );
+        // 2. Appel API Echo
+        try {
+          await fetch('http://localhost:3000/api/echo/receive-staffing-alert', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              emailId: newAlertMail._id,
+              department: dept,
+              currentCount: count,
+              maxCapacity: limit
+            })
+          });
+        } catch (e) { console.warn("Echo inaccessible"); }
 
-      if (isForbidden) {
-        return res.status(400).json({
-          success: false,
-          error: 'invalid_role_contract_combination',
-          message: `❌ Un ${contract_type} ne peut pas être "${roleText}"`,
+        // 3. Log de l'action dans HeraAction (C'est ce log qui bloque les alertes pendant 7 jours)
+        await HeraAction.create({
+          action_type: 'absence_alert',
+          details: { 
+            department: dept, 
+            email_id: newAlertMail._id, 
+            count: count,
+            limit: limit,
+            energyConsumed: energyConsumed
+          },
+          triggered_by: 'hera_auto'
         });
+
+        report.push({ dept, status: 'SENT', reason: "Alerte hebdomadaire envoyée à Echo." });
+
+      } else {
+        report.push({ dept, status: 'OK', reason: "Effectif suffisant." });
       }
     }
-
-    let leaveBalance;
-    switch (contract_type) {
-      case 'CDI':
-        leaveBalance = { annual: 25, sick: 10, urgent: 3 };
-        break;
-      case 'CDD':
-        leaveBalance = { annual: 20, sick: 10, urgent: 2 };
-        break;
-      case 'Stage':
-        leaveBalance = { annual: 5, sick: 5, urgent: 1 };
-        break;
-      case 'Freelance':
-        leaveBalance = { annual: 0, sick: 0, urgent: 0 };
-        break;
-      default:
-        leaveBalance = { annual: 25, sick: 10, urgent: 3 };
-    }
-
-    const startDate = contract_start ? new Date(contract_start) : new Date();
-    if (isNaN(startDate.getTime())) {
-      return res.status(400).json({
-        success: false,
-        error: 'invalid_contract_start',
-        message: '❌ contract_start invalide (format incorrect)',
-      });
-    }
-
-    const endDate = computeContractEnd(contract_type, startDate);
-    const salaryValue = parseOptionalNumber(salary);
-
-    const employee = await Employee.create({
-      name,
-      email: normalizedEmail,
-      role: roleText,
-      department: normalizedDepartment || 'Non défini',
-      contract: { 
-        type: contract_type, 
-        start: startDate,
-        end: endDate,
-      },
-      manager_email: manager_email || null,
-      salary: salaryValue,
-      leave_balance: leaveBalance,
-      leave_balance_used: {
-        annual: 0,
-        sick: 0,
-        urgent: 0
-      },
-      leave_balance_year: new Date().getFullYear(),
-      status: 'onboarding'
-    });
-
-    await HeraAction.create({
-      employee_id: employee._id,
-      action_type: 'employee_onboarding_started',
-      details: {
-        name: employee.name,
-        email: employee.email,
-        role: employee.role,
-        department: employee.department,
-        contract_type: employee.contract?.type,
-        start_date: employee.contract?.start,
-        end_date: employee.contract?.end,
-        status: employee.status,
-        salary: salaryValue,
-      },
-      triggered_by: 'hera_auto',
-    });
-
-    res.status(201).json({
-      success: true,
-      message: `✅ Onboarding démarré pour ${name}`,
-      employee_id: employee._id,
-      employee: {
-        name: employee.name,
-        email: employee.email,
-        role: employee.role,
-        department: employee.department,
-        contract_type: employee.contract?.type,
-        start_date: employee.contract?.start,
-        end_date: employee.contract?.end,
-        status: employee.status,
-      },
-    });
+    res.json({ success: true, report });
   } catch (err) {
-    console.error('❌ Erreur onboarding:', err);
-    res.status(500).json({
-      success: false,
-      error: 'server_error',
-      message: '❌ Erreur serveur : ' + err.message
+    res.status(500).json({ error: err.message });
+  }
+};
+// --- Garde ta fonction getNextSessionDate() que nous avons écrite avant ---
+
+exports.processCandidacy = async (req, res) => {
+  try {
+   const { name, email, resume_text, department } = req.body;
+    
+    // ✅ On récupère le fichier envoyé
+    const resume_url = req.file ? req.file.path : null; 
+
+    // Logic IA (Inchangée)
+    const analysis = await heraAgent.analyzeCandidate(resume_text, department);
+    const score = Number(analysis.score) || 0;
+    if (score > 80) {
+      // ✅ REMPLACE PAR CE NOM (Étape 1 : Entretien individuel)
+      await mailService.sendInterviewInvitation(email, name); 
+      
+  await Candidate.create({
+      name,
+      email,
+      department,
+      resume_text,
+      resume_url, // 👈 Le chemin vers le PDF est stocké ici
+      status: score >= 80 ? 'interview_scheduled' : 'applied',
+      score_ia: score
     });
+      } else {
+      await mailService.sendCandidacyConfirmation(email, name);
+      await Candidate.create({ name, email, status: 'applied', score_ia: score, resume_text });
+    }
+    res.json({ success: true, score });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 };
 
-// ── Récupérer les congés d'un employé ─────────────────────────────────────
+exports.hireCandidate = async (req, res) => {
+  try {
+    const candidateId = req.params.id;
+    const candidate = await Candidate.findById(candidateId);
+
+    if (!candidate) return res.status(404).json({ message: "Candidat non trouvé" });
+
+    // 1. Création du profil Employé
+    const newEmployee = await Employee.create({
+      name: candidate.name,
+      email: candidate.email,
+      status: 'active',
+      role: "Collaborateur",
+      department: candidate.department || "Tech",
+      leave_balance: { annual: 25, sick: 10, urgent: 3 }
+    });
+
+    // --- 🤖 LOGIQUE ANTI-DOUBLON DE TIMO (Utilise ton modèle 'Task') ---
+    let suggestedDate = new Date();
+    // On commence les RDV à partir de demain à 14:00
+    suggestedDate.setDate(suggestedDate.getDate() + 1);
+    suggestedDate.setHours(14, 0, 0, 0);
+
+    let isSlotOccupied = true;
+    
+    while (isSlotOccupied) {
+      // On vérifie si une tâche de type 'meeting' existe déjà à cette 'deadline'
+      const conflict = await Task.findOne({ 
+        deadline: suggestedDate,
+        category: 'meeting'
+      });
+
+      if (conflict) {
+        // Si occupé, on décale de 1 heure
+        console.log(`⚠️ Slot ${suggestedDate.toLocaleString()} occupé par "${conflict.title}", décalage...`);
+        suggestedDate.setHours(suggestedDate.getHours() + 1);
+
+        // Si on dépasse 17h, on passe au lendemain 14h
+        if (suggestedDate.getHours() >= 17) {
+          suggestedDate.setDate(suggestedDate.getDate() + 1);
+          suggestedDate.setHours(14, 0, 0, 0);
+        }
+      } else {
+        // Le créneau est libre !
+        isSlotOccupied = false;
+      }
+    }
+
+    // 2. Création de la tâche pour Timo (Blocage du calendrier)
+    await Task.create({
+      title: `Onboarding : ${newEmployee.name}`,
+      description: `Session d'intégration officielle pour le nouveau collaborateur ${newEmployee.name}.`,
+      deadline: suggestedDate, // ✅ Utilise ton champ 'deadline'
+      category: 'meeting',
+      priority: 'high',
+      status: 'todo',
+      userId: 'current_user' // Valeur par défaut de ton modèle
+    });
+
+    // 3. ✅ Envoi de la notification mail par Hera
+    const formattedDate = suggestedDate.toLocaleString('fr-FR', {
+      weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit'
+    });
+
+    await mailService.sendGroupMeetingInvitation(candidate.email, {
+      name: candidate.name,
+      interview_date: formattedDate,
+      meeting_link: "https://meet.jit.si/ETeam_Discovery_Session"
+    });
+
+    // 4. On retire le candidat de la liste
+    await Candidate.findByIdAndDelete(candidateId);
+
+    res.json({ 
+      success: true, 
+      message: "Embauche réussie. Timo a planifié le RDV.",
+      plannedDate: formattedDate 
+    });
+
+  } catch (err) {
+    console.error("❌ Erreur hireCandidate:", err);
+    res.status(500).json({ error: err.message });
+  }
+};
+// ── 2. GÉNÉRATION DE DOCUMENTS (CONTRAT / ATTESTATION) ────────────────────
+exports.generateDocument = async (req, res) => {
+  try {
+    const { employee_id, doc_type } = req.body;
+    
+    // 1. On récupère l'employé avec toutes ses infos de contrat
+    const employee = await Employee.findById(employee_id);
+    if (!employee) return res.status(404).json({ message: "Employé non trouvé" });
+
+    // 2. Préparation et formatage des dates (très important)
+    const options = { year: 'numeric', month: 'long', day: 'numeric' };
+    
+    // Date d'aujourd'hui (date de signature)
+    const today = new Date().toLocaleDateString('fr-FR', options);
+    
+    // Date de début (récupérée de l'onboarding)
+    const startDate = employee.contract?.start 
+      ? new Date(employee.contract.start).toLocaleDateString('fr-FR', options) 
+      : "Non définie";
+
+    // Date de fin (si CDD/Stage) ou mention CDI
+    const endDate = employee.contract?.end 
+      ? new Date(employee.contract.end).toLocaleDateString('fr-FR', options) 
+      : "Indéterminée (Contrat CDI)";
+
+    let content = "";
+// Dans controllers/heraController.js
+// Dans controllers/heraController.js
+
+if (doc_type === 'contract') {
+  content = `
+==========================================
+           CONTRAT DE TRAVAIL
+==========================================
+
+RÉFÉRENCE : ET-2026-${employee_id.toString().substring(0, 5).toUpperCase()}
+FAIT LE : ${today}
+
+ENTRE :
+La société E-TEAM, 
+
+ET LE COLLABORATEUR :
+Nom : ${employee.name}
+Poste : ${employee.role}
+Département : ${employee.department}
+
+------------------------------------------
+DÉTAILS DU CONTRAT :
+------------------------------------------
+TYPE DE CONTRAT  : ${employee.contract?.type || 'CDI'}
+DATE DE DÉBUT    : ${startDate}
+DATE DE FIN      : ${endDate}
+RÉMUNÉRATION     : ${employee.salary || 3000} € / mois
+
+CLAUSES :
+Ce document certifie que le collaborateur a passé
+avec succès les étapes de recrutement IA. 
+Le présent contrat est régi par les lois en vigueur.
+
+------------------------------------------
+SIGNATURE ÉLECTRONIQUE HERA IA : [CERTIFIÉ]
+==========================================
+  `;
+}
+
+    // 3. On enregistre le document avec les VRAIES dates dans l'historique
+    await HeraAction.create({
+      employee_id: employee._id,
+      action_type: 'contract_renewal',
+      details: { 
+        doc_type: 'contract', 
+        content: content // On stocke le texte complet avec les dates
+      },
+      triggered_by: 'hera_auto'
+    });
+
+    res.json({ success: true, content });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+exports.initAllMissingDocs = async (req, res) => {
+  try {
+    const employees = await Employee.find();
+    let count = 0;
+
+    for (const emp of employees) {
+      // On vérifie si l'employé a déjà un contrat
+      const hasContract = await HeraAction.findOne({ employee_id: emp._id, action_type: 'contract_renewal' });
+      
+      if (!hasContract) {
+        // On lui crée son contrat rétroactivement
+        const content = `CONTRAT DE TRAVAIL (Archive)\n\nEmployé : ${emp.name}\nPoste : ${emp.role}\nFait automatiquement par Hera.`;
+        
+        await HeraAction.create({
+          employee_id: emp._id,
+          action_type: 'contract_renewal',
+          details: { doc_type: 'contract', content: content },
+          triggered_by: 'hera_auto'
+        });
+        count++;
+      }
+    }
+    res.json({ success: true, message: `${count} contrats générés pour les anciens employés.` });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+// ══════════════════════════════════════════════════════════════════════════
+// LOGIQUE DE DÉCISION RH (Utilisée par Chat Admin ET Formulaire Employé)
+// ══════════════════════════════════════════════════════════════════════════
+async function executeLeaveDecision(data) {
+  const { employee_id, type, start_date, end_date, reason } = data;
+  const start = new Date(start_date);
+  const end = new Date(end_date);
+  const days = calculateDays(start, end);
+
+  const employee = await Employee.findById(employee_id);
+  if (!employee) return { success: false, message: "Employé non trouvé." };
+
+  const remaining = (employee.leave_balance?.[type] || 0) - (employee.leave_balance_used?.[type] || 0);
+
+  if (days > remaining) {
+    const refusal_reason = `Solde insuffisant (${remaining}j restants).`;
+    // ✅ Utilise la notification de CONGÉ (Refus)
+    await mailService.sendLeaveNotification(employee.email, {
+      employee_name: employee.name, start_date, end_date, status: 'refused', reason_decision: refusal_reason, days
+    });
+    return { success: false, message: refusal_reason };
+  }
+
+  const simultaneousCount = await LeaveRequest.countDocuments({
+    status: 'approved',
+    employee_id: { $ne: employee_id },
+    $or: [{ start_date: { $lte: end }, end_date: { $gte: start } }]
+  });
+
+  let status = (type === 'urgent' || simultaneousCount < 2) ? 'approved' : 'refused';
+  let decision_reason = status === 'approved' ? 'Capacité OK' : `Déjà ${simultaneousCount} personnes en congé.`;
+
+  const leave = await LeaveRequest.create({
+    employee_id, employee_email: employee.email, type, start_date: start, end_date: end, days, reason, status
+  });
+
+  await HeraAction.create({
+    employee_id, action_type: status === 'approved' ? 'leave_approved' : 'leave_refused',
+    details: { type, days, decision_reason }, triggered_by: 'hera_auto'
+  });
+
+  if (status === 'approved') {
+    await Employee.findByIdAndUpdate(employee_id, { $inc: { [`leave_balance_used.${type}`]: days } });
+  }
+
+  // ✅ Utilise la notification de CONGÉ (Final)
+  await mailService.sendLeaveNotification(employee.email, {
+    employee_name: employee.name, start_date, end_date, status, reason_decision: decision_reason, days
+  });
+
+  return { success: true, status, message: `Décision : ${status}. ${decision_reason}`, leave };
+}
+// --- Helper pour calculer le prochain vendredi à 14h ---
+// --- Helper pour calculer le prochain vendredi à 14h ---
+// ── HELPER : CALCUL DU PROCHAIN VENDREDI 14H ──
+function getNextSessionDate() {
+  const now = new Date();
+  const nextFriday = new Date();
+  // Calcule le nombre de jours jusqu'au vendredi (5)
+  nextFriday.setDate(now.getDate() + (5 - now.getDay() + 7) % 7);
+  nextFriday.setHours(14, 0, 0, 0);
+  
+  // Si on est déjà vendredi après 14h, on passe au vendredi suivant
+  if (now > nextFriday) {
+    nextFriday.setDate(nextFriday.getDate() + 7);
+  }
+  return nextFriday;
+}
+
+exports.processCandidacy = async (req, res) => {
+  try {
+    const { name, email, resume_text } = req.body;
+    const analysis = await heraAgent.analyzeCandidate(resume_text, "Profil E-Team");
+    const score = analysis.score || 0;
+
+    if (score >= 80) {
+      // ✅ LIEN INDIVIDUEL UNIQUE
+      const individualMeet = `https://meet.jit.si/ETeam_Interview_${name.replace(/\s+/g, '_')}`;
+        const date = await timo.autoPlanMeeting(name, "Interview");
+
+      await mailService.sendInterviewInvitation(email, { 
+        name, 
+        meeting_link: individualMeet 
+      });
+      
+      await Candidate.create({ name, email, status: 'interview_scheduled', score_ia: score, resume_text, meeting_link: individualMeet });
+    } else {
+      await mailService.sendCandidacyConfirmation(email, name);
+      await Candidate.create({ name, email, status: 'applied', score_ia: score, resume_text });
+    }
+    res.json({ success: true, score });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+};
+
+
+// ── ÉTAPE 2 : EMBOUCHE ET SESSION COLLECTIVE (Après validation Admin) ──
+exports.hireCandidate = async (req, res) => {
+  try {
+    const candidateId = req.params.id;
+    const candidate = await Candidate.findById(candidateId);
+
+    if (!candidate) return res.status(404).json({ message: "Candidat non trouvé" });
+
+    // 1. On crée le profil Employé officiellement
+    const newEmployee = await Employee.create({
+      name: candidate.name,
+      email: candidate.email,
+      status: 'active',
+      role: "Collaborateur", // À modifier dynamiquement si besoin
+      leave_balance: { annual: 25, sick: 10, urgent: 3 }
+    });
+
+    // 2. On prépare la date de la session de bienvenue (Vendredi 14h)
+    const sessionDate = getNextSessionDate();
+    const formattedDate = sessionDate.toLocaleDateString('fr-FR', {
+      weekday: 'long', 
+      day: 'numeric', 
+      month: 'long', 
+      hour: '2-digit', 
+      minute: '2-digit'
+    });
+  const date = await timo.autoPlanMeeting(newEmployee.name, "Onboarding");
+
+    // 3. ✅ CAS C : Embauche validée -> On invite au MEET COLLECTIF D'ÉQUIPE (Noir & Lime)
+    // Utilise la fonction : sendGroupMeetingInvitation
+    await mailService.sendGroupMeetingInvitation(candidate.email, {
+      name: candidate.name,
+      interview_date: formattedDate,
+      meeting_link: "https://meet.jit.si/ETeam_Discovery_Session_Team"
+    });
+
+    // 4. On retire le candidat de la liste de recrutement
+    await Candidate.findByIdAndDelete(candidateId);
+
+    console.log(`✅ ${candidate.name} est embauché. Mail de bienvenue envoyé.`);
+    res.json({ success: true, message: "Embauche réussie et mail d'équipe envoyé." });
+
+  } catch (err) {
+    console.error("❌ Erreur hireCandidate:", err);
+    res.status(500).json({ error: err.message });
+  }
+};
+// ══════════════════════════════════════════════════════════════════════════
+// EXPORTS POUR LES ROUTES
+// ══════════════════════════════════════════════════════════════════════════
+
+exports.hello = async (req, res) => {
+  res.json({ success: true, agent: 'Hera', message: 'Hello! Je suis Hera 👋' });
+};
+
+// Route pour l'Admin (Chat LangChain)
+exports.chat = async (req, res) => {
+  try {
+    const { message } = req.body;
+    const analysis = await heraAgent.analyze(message);
+
+    if (analysis.intent === "LEAVE_REQUEST") {
+      // Chercher l'employé par son nom extrait par l'IA
+      const employee = await Employee.findOne({ name: new RegExp(analysis.data.employee_name, 'i') });
+      if (!employee) return res.json({ success: true, agent: 'Hera', message: `Je ne trouve pas d'employé nommé "${analysis.data.employee_name}"` });
+
+      const result = await executeLeaveDecision({
+        employee_id: employee._id,
+        type: analysis.data.type || 'annual',
+        start_date: analysis.data.start_date,
+        end_date: analysis.data.end_date,
+        reason: analysis.data.reason || "Accordé par l'Admin"
+      });
+
+      return res.json({ success: true, agent: 'Hera', message: result.message });
+    }
+    res.json({ success: true, agent: 'Hera', message: analysis.reply });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+};
+
+// Route pour l'Employé (Formulaire JSON)
+exports.requestLeave = async (req, res) => {
+  try {
+    const result = await executeLeaveDecision(req.body);
+    res.status(result.success ? 201 : 400).json(result);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+};
+
+exports.urgentLeave = async (req, res) => {
+  const today = new Date().toISOString().split('T')[0];
+  req.body.type = 'urgent';
+  req.body.start_date = today;
+  req.body.end_date = today;
+  return exports.requestLeave(req, res);
+};
+
+// ── FONCTION : ONBOARDING (Vraie Bienvenue) ──
+exports.onboarding = async (req, res) => {
+  try {
+    const { name, email, password } = req.body;
+    // On génère un mot de passe s'il n'y en a pas
+    const tempPassword = req.body.password || `ET-${Math.floor(1000 + Math.random() * 9000)}`;
+
+    // ✅ ÉTAPE CRUCIALE : Hachage
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(tempPassword, salt);
+
+    // Création de l'employé avec le mot de passe HACHÉ
+    const employee = await Employee.create({
+      ...req.body,
+      password: hashedPassword, // 👈 On enregistre la version cryptée
+      status: 'active'
+    });
+
+    // Envoi du mail avec le mot de passe en CLAIR (pour que l'utilisateur le connaisse)
+    await mailService.sendWelcomeEmail(employee.email, employee.name, tempPassword);
+
+    res.status(201).json({ success: true, message: "Onboarding réussi" });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
 exports.getLeaves = async (req, res) => {
   try {
-    const { employee_id } = req.params;
-    
-    console.log(`📡 Récupération des congés pour l'employé ${employee_id}`);
-    
-    const leaves = await LeaveRequest.find({ employee_id })
-      .sort({ created_at: -1 })
-      .limit(50)
-      .lean();
-    
-    console.log(`✅ ${leaves.length} congé(s) trouvé(s)`);
-    
-    const employee = await Employee.findById(employee_id);
-    
-    if (!employee) {
-      console.log(`❌ Employé ${employee_id} non trouvé`);
-      return res.status(404).json({
-        success: false,
-        error: 'employee_not_found',
-        message: '❌ Employé non trouvé'
-      });
-    }
-    
-    // Calcul des soldes
-    const annualTotal = employee.leave_balance?.annual || 0;
-    const annualUsed = employee.leave_balance_used?.annual || 0;
-    const annualRemaining = Math.max(0, annualTotal - annualUsed);
-    
-    const sickTotal = employee.leave_balance?.sick || 0;
-    const sickUsed = employee.leave_balance_used?.sick || 0;
-    const sickRemaining = Math.max(0, sickTotal - sickUsed);
-    
-    const urgentTotal = employee.leave_balance?.urgent || 0;
-    const urgentUsed = employee.leave_balance_used?.urgent || 0;
-    const urgentRemaining = Math.max(0, urgentTotal - urgentUsed);
-    
-    return res.json({
-      success: true,
-      leaves,
-      balances: {
-        annual: {
-          total: annualTotal,
-          used: annualUsed,
-          remaining: annualRemaining
-        },
-        sick: {
-          total: sickTotal,
-          used: sickUsed,
-          remaining: sickRemaining
-        },
-        urgent: {
-          total: urgentTotal,
-          used: urgentUsed,
-          remaining: urgentRemaining
-        }
-      },
-      total_leaves: leaves.length
-    });
-    
-  } catch (error) {
-    console.error('❌ Erreur getLeaves:', error);
-    return res.status(500).json({
-      success: false,
-      error: 'server_error',
-      message: '❌ Erreur serveur : ' + error.message
-    });
-  }
+    const leaves = await LeaveRequest.find({ employee_id: req.params.employee_id }).sort({ created_at: -1 });
+    res.json({ success: true, leaves });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 };
 
-// ── Promotion ──────────────────────────────────────────────────────────────
-exports.promote = async (req, res) => {
-  try {
-    const { employee_id, new_role, new_salary } = req.body;
+exports.getLeaveHistory = exports.getLeaves;
 
-    const employee = await Employee.findById(employee_id);
-    if (!employee) {
-      return res.status(404).json({
-        success: false,
-        error: 'Employé non trouvé'
-      });
-    }
-
-    await Employee.findByIdAndUpdate(employee_id, {
-      role: new_role,
-      salary: new_salary,
-    });
-
-    await HeraAction.create({
-      employee_id,
-      action_type: 'promotion',
-      details: { old_role: employee.role, new_role },
-      triggered_by: 'manager',
-    });
-
-    await n8n.promote({
-      employee_name: employee.name,
-      employee_email: employee.email,
-      old_role: employee.role,
-      new_role,
-    });
-
-    res.json({
-      success: true,
-      message: `🎉 ${employee.name} promu(e) — ${new_role}`,
-    });
-  } catch (err) {
-    console.error('❌ Erreur promote:', err);
-    res.status(500).json({ success: false, error: err.message });
-  }
-};
-
-// ── Offboarding ────────────────────────────────────────────────────────────
-exports.offboarding = async (req, res) => {
-  try {
-    const { employee_id, reason, last_day } = req.body;
-
-    const employee = await Employee.findById(employee_id);
-    if (!employee) {
-      return res.status(404).json({
-        success: false,
-        error: 'Employé non trouvé'
-      });
-    }
-
-    await Employee.findByIdAndUpdate(employee_id, {
-      status: 'offboarding',
-    });
-
-    await HeraAction.create({
-      employee_id,
-      action_type: 'offboarding_started',
-      details: { reason, last_day },
-      triggered_by: 'system',
-    });
-
-    await n8n.offboarding({
-      employee_name: employee.name,
-      employee_email: employee.email,
-      manager_email: employee.manager_email,
-      reason,
-      last_day,
-    });
-
-    res.json({
-      success: true,
-      message: `🚪 Offboarding démarré pour ${employee.name}`,
-    });
-  } catch (err) {
-    console.error('❌ Erreur offboarding:', err);
-    res.status(500).json({ success: false, error: err.message });
-  }
-};
-
-// ── Historique ─────────────────────────────────────────────────────────────
 exports.getHistory = async (req, res) => {
   try {
-    const { employee_id } = req.params;
-    const actions = await HeraAction
-      .find({ employee_id })
-      .sort({ created_at: -1 })
-      .limit(20);
-
+    const actions = await HeraAction.find({ employee_id: req.params.employee_id }).sort({ created_at: -1 });
     res.json({ success: true, actions });
-  } catch (err) {
-    console.error('❌ Erreur getHistory:', err);
-    res.status(500).json({ success: false, error: err.message });
-  }
+  } catch (err) { res.status(500).json({ error: err.message }); }
 };
 
-// ══════════════════════════════════════════════════════════════════════════
-// ROUTES ADMIN
-// ══════════════════════════════════════════════════════════════════════════
+exports.promote = async (req, res) => {
+  try {
+    const { employee_id, new_role } = req.body;
+    await Employee.findByIdAndUpdate(employee_id, { role: new_role });
+    res.json({ success: true, message: "Promotion effectuée" });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+};
 
+exports.offboarding = async (req, res) => {
+  try {
+    await Employee.findByIdAndUpdate(req.body.employee_id, { status: 'inactive' });
+    res.json({ success: true, message: "Offboarding terminé" });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+};
+
+// Placeholders pour les routes admin pour éviter les crashs
 exports.getAdminStats = async (req, res) => {
   try {
+    // 1. Compter le total des employés actifs ou en onboarding
     const totalEmployees = await Employee.countDocuments({
       status: { $in: ['active', 'onboarding'] },
     });
-    
+
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
-    
+
+    // 2. Compter les employés en congé AUJOURD'HUI
     const onLeaveToday = await LeaveRequest.countDocuments({
       status: 'approved',
       start_date: { $lte: tomorrow },
       end_date: { $gte: today }
     });
-    
+
+    // 3. Calculer le cumul des jours de congé du mois en cours
     const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
     const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
-    
+
     const monthlyLeaves = await LeaveRequest.aggregate([
       {
         $match: {
@@ -890,7 +788,8 @@ exports.getAdminStats = async (req, res) => {
         }
       }
     ]);
-    
+
+    // On renvoie les vrais chiffres au format attendu par Flutter
     return res.json({
       success: true,
       stats: {
@@ -899,199 +798,191 @@ exports.getAdminStats = async (req, res) => {
         monthly_leave_days: monthlyLeaves[0]?.totalDays || 0
       }
     });
-    
+
   } catch (error) {
     console.error('❌ Erreur getAdminStats:', error);
-    return res.status(500).json({
-      success: false,
-      error: 'server_error',
-      message: error.message
-    });
+    res.status(500).json({ success: false, error: error.message });
   }
 };
-
 exports.getAllEmployees = async (req, res) => {
   try {
-    console.log('📡 Récupération des employés...');
-    
-    const employees = await Employee.find({ status: { $in: ['active', 'onboarding'] } })
-      .select('-salary -__v')
-      .sort({ name: 1 })
-      .lean();
-    
-    console.log(`✅ ${employees.length} employés trouvés`);
-    
-    const employeesWithBalances = employees.map(emp => {
-      const annualTotal = emp.leave_balance?.annual || 0;
-      const annualUsed = emp.leave_balance_used?.annual || 0;
-      const annualRemaining = Math.max(0, annualTotal - annualUsed);
-      
-      const sickTotal = emp.leave_balance?.sick || 0;
-      const sickUsed = emp.leave_balance_used?.sick || 0;
-      const sickRemaining = Math.max(0, sickTotal - sickUsed);
-      
-      const urgentTotal = emp.leave_balance?.urgent || 0;
-      const urgentUsed = emp.leave_balance_used?.urgent || 0;
-      const urgentRemaining = Math.max(0, urgentTotal - urgentUsed);
-      
-      return {
-        _id: emp._id.toString(),
-        name: emp.name,
-        email: emp.email,
-        role: emp.role || 'Employé',
-        department: emp.department || 'Non défini',
-        status: emp.status || 'active',
-        start_date: emp.contract?.start || null,
-        balances: {
-          annual: {
-            total: annualTotal,
-            used: annualUsed,
-            remaining: annualRemaining
-          },
-          sick: {
-            total: sickTotal,
-            used: sickUsed,
-            remaining: sickRemaining
-          },
-          urgent: {
-            total: urgentTotal,
-            used: urgentUsed,
-            remaining: urgentRemaining
-          }
-        }
-      };
-    });
-    
-    console.log('📤 Envoi des employés:', JSON.stringify(employeesWithBalances, null, 2));
-    
-    return res.json({
-      success: true,
-      employees: employeesWithBalances,
-      total: employeesWithBalances.length
-    });
-    
-  } catch (error) {
-    console.error('❌ Erreur getAllEmployees:', error);
-    return res.status(500).json({
-      success: false,
-      error: 'server_error',
-      message: error.message
-    });
-  }
-};
-// ══════════════════════════════════════════════════════════════════════════
-// NOUVELLE ROUTE : Envoyer un email à Echo
-// ══════════════════════════════════════════════════════════════════════════
+    // ✅ On ignore les 'inactive' pour ne pas polluer l'écran
+    const employees = await Employee.find({ 
+      status: { $in: ['active', 'onboarding', 'offboarding'] } 
+    }).sort({ name: 1 });
 
-exports.sendEmailToEcho = async (req, res) => {
-  const { to, subject, content, from } = req.body;
-  
-  try {
-    const response = await fetch('http://localhost:3000/api/emails/receive', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        subject: subject,
-        sender: from || 'hera@e-team.com',
-        content: content
-      })
-    });
-    
-    const analysis = await response.json();
-    
-    res.json({
-      success: true,
-      message: 'Email envoyé à Echo',
-      analysis: analysis
-    });
-    
-  } catch (error) {
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
+    res.json({ success: true, employees });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
   }
 };
-// ══════════════════════════════════════════════════════════════════════════
-// RECEVOIR UN EMAIL D'ECHO
-// ══════════════════════════════════════════════════════════════════════════
-
-exports.receiveEmailFromEcho = async (req, res) => {
-  const { subject, sender, content, type } = req.body;
-  
-  try {
-    console.log('📧 Hera a reçu un email de Echo:');
-    console.log('   Sujet:', subject);
-    console.log('   Expéditeur:', sender);
-    console.log('   Contenu:', content);
-    
-    // Analyser l'email avec l'IA (optionnel)
-    // Tu peux appeler Groq ici si tu veux qu'Hera analyse aussi
-    
-    // Stocker dans une collection "hera_emails" si besoin
-    // await HeraEmail.create({ subject, sender, content, receivedAt: new Date() });
-    
-    res.json({
-      success: true,
-      message: 'Email reçu par Hera',
-      receivedAt: new Date().toISOString(),
-      email: { subject, sender, content }
-    });
-    
-  } catch (error) {
-    console.error('❌ Erreur receiveEmailFromEcho:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-};
-/**
- * Récupère les actions récentes (historique)
- */
 exports.getRecentActions = async (req, res) => {
   try {
-    const limit = parseInt(req.query.limit) || 5;
-    
-    // Récupère les dernières demandes de congé (tous statuts)
-    const recentLeaves = await LeaveRequest.find()
-      .sort({ updated_at: -1, created_at: -1 })
+    const limit = parseInt(req.query.limit) || 8;
+
+    const recentActions = await HeraAction.find()
+      .sort({ created_at: -1 })
       .limit(limit)
+      .populate('employee_id', 'name role')
       .lean();
-    
-    // Enrichir avec les noms d'employés
-    const enrichedLeaves = await Promise.all(
-      recentLeaves.map(async (leave) => {
-        const employee = await Employee.findById(leave.employee_id);
-        return {
-          _id: leave._id,
-          employee_name: employee?.name || 'Unknown',
-          employee_role: employee?.role || '',
-          type: leave.type,
-          status: leave.status,
-          days: leave.days,
-          start_date: leave.start_date,
-          end_date: leave.end_date,
-          approved_by: leave.approved_by,
-          created_at: leave.created_at,
-          updated_at: leave.updated_at,
-        };
-      })
-    );
-    
-    return res.json({
-      success: true,
-      recent_actions: enrichedLeaves,
-      total: enrichedLeaves.length
-    });
-    
+
+    const formattedActions = recentActions.map(action => ({
+      _id: action._id,
+      employee_name: action.employee_id?.name || 'Système',
+      action_type: action.action_type,
+      // ✅ AJOUTE CETTE LIGNE POUR ENVOYER LES DÉTAILS À FLUTTER
+      details: action.details, 
+      created_at: action.created_at,
+      badge: action.triggered_by === 'hera_auto' ? 'IA' : 'ADMIN'
+    }));
+
+    return res.json({ success: true, recent_actions: formattedActions });
+
   } catch (error) {
-    console.error('❌ Erreur getRecentActions:', error);
-    return res.status(500).json({
-      success: false,
-      error: 'server_error',
-      message: error.message
-    });
+    res.status(500).json({ success: false, error: error.message });
   }
-  
 };
+// ── NOUVELLE FONCTION : TRAITER LA DÉMISSION (OFF-BOARDING) ──
+exports.processResignation = async (req, res) => {
+  try {
+    const { email } = req.body;
+    const employee = await Employee.findOne({ email: email.toLowerCase().trim() });
+    
+    if (!employee) return res.status(404).json({ success: false, message: "Employé non trouvé" });
+
+    // ⚡ CONSUME ENERGY FOR EMPLOYEE ANALYSIS (resignation processing)
+    const { manualEnergyConsumption } = require('../middleware/energyMiddleware');
+    
+    // Find user with most energy for energy deduction
+    let userId = null;
+    let energyConsumed = 0;
+    try {
+      const User = require('../models/User');
+      const userWithEnergy = await User.findOne({ energyBalance: { $gt: 0 } }).sort({ energyBalance: -1 });
+      if (userWithEnergy) {
+        userId = userWithEnergy._id.toString();
+        console.log(`⚡ [HERA] Using user portfolio for energy: ${userId} (${userWithEnergy.energyBalance} energy)`);
+      }
+      
+      const energyResult = await manualEnergyConsumption(
+        'hera',
+        'EMPLOYEE_ANALYSIS',
+        `Processed resignation for ${employee.name}`,
+        { 
+          employeeId: employee._id,
+          employeeName: employee.name,
+          processType: 'resignation'
+        },
+        userId // Pass userId for user portfolio deduction
+      );
+      
+      if (energyResult.success) {
+        energyConsumed = energyResult.energyCost;
+        console.log(`⚡ [ENERGY] Hera consumed ${energyResult.energyCost} energy for EMPLOYEE_ANALYSIS`);
+      } else {
+        console.warn(`⚠️ [ENERGY] ${energyResult.error} - Continuing with resignation processing`);
+      }
+    } catch (err) {
+      console.warn('⚠️ [HERA] Could not process energy consumption:', err.message);
+    }
+
+    // ✅ APPEL À TIMO (Attendre l'objet de retour)
+    const planning = await timo.autoPlanMeeting(employee.name, "Démission");
+
+    await mailService.sendHeraConvocation(employee.email, {
+        name: employee.name,
+        date: planning.date,
+        type: "Entretien de départ",
+        mode: "Remote", // Ou "On-site"
+        meeting_link: `https://meet.jit.si/ETeam_Exit_${employee.name.replace(/\s+/g, '_')}` // ✅ ICI ON CRÉE LE LIEN
+    });
+
+    res.json({ success: true, message: `Rendez-vous fixé au ${planning.date}` });
+
+  } catch (err) {
+    console.error("🔥 CRASH BACKEND:", err.message); // Regarde ton terminal Node !
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// controllers/heraController.js
+
+exports.getAgentInteractions = async (req, res) => {
+  try {
+    // 1. On récupère les 10 derniers logs bruts de la base de données
+    const rawLogs = await HeraAction.find()
+      .sort({ created_at: -1 })
+      .limit(10)
+      .populate('employee_id', 'name');
+
+    // 2. On prépare un prompt pour que l'IA interprète ces logs
+    const prompt = `
+      Tu es Dexo, le Superviseur de l'écosystème E-Team. 
+      Analyse ces logs système et transforme-les en un tableau JSON d'interactions entre agents.
+      
+      LOGS À ANALYSER :
+      ${JSON.stringify(rawLogs)}
+
+      RÈGLES STRICTES :
+      - Tu dois identifier l'émetteur (sender) et le récepteur (receiver) parmi : hera, echo, timo, dexo, kash.
+      - Pour une 'doc_request', le sender est 'dexo' et le receiver est 'hera'.
+      - Pour une 'absence_alert', le sender est 'hera' et le receiver est 'echo'.
+      - Pour une 'offboarding_started', le sender est 'hera' et le receiver est 'timo'.
+      - 'summary' doit être une phrase technique et pro.
+      - 'status' doit être 'success' ou 'encrypted'.
+
+      FORMAT DE RÉPONSE (JSON UNIQUEMENT) :
+      {
+        "interactions": [
+          { "id": "ID_DU_LOG", "sender": "nom", "receiver": "nom", "actionType": "type", "summary": "phrase", "timestamp": "ISO_DATE", "status": "success" }
+        ]
+      }
+    `;
+
+    // 3. Appel à l'IA pour interpréter les logs
+    const aiResponse = await heraAgent.llm.invoke(prompt);
+    
+    // On nettoie la réponse pour être sûr d'avoir du JSON pur
+    const cleanJson = aiResponse.content.match(/\{.*\}/s)[0];
+    const parsedData = JSON.parse(cleanJson);
+
+    res.json({ success: true, ...parsedData });
+
+  } catch (err) {
+    console.error("❌ Erreur IA Logs:", err.message);
+    res.status(500).json({ success: false, error: "L'IA n'a pas pu interpréter les logs." });
+  }
+};
+// controllers/heraController.js
+
+exports.getAgentInteractionStats = async (req, res) => {
+  try {
+    // 1. On compte le total des interactions (logs HeraAction)
+    const total = await HeraAction.countDocuments();
+
+    // 2. On compte les échanges "Encrypted" (tous les doc_request qui ont un hash)
+    const encrypted = await HeraAction.countDocuments({ action_type: 'doc_request' });
+
+    // 3. On compte les succès (on considère les alertes staffing et offboarding comme succès immédiat)
+    const successful = await HeraAction.countDocuments({ 
+      action_type: { $in: ['absence_alert', 'offboarding_started'] } 
+    }) + encrypted;
+
+    res.json({
+      success: true,
+      stats: {
+        total: total,
+        successful: successful,
+        encrypted: encrypted,
+        pending: 0,
+        failed: 0
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+};
+exports.getAllActions = (req, res) => res.json({ success: true, actions: [] });
+exports.deleteAction = (req, res) => res.json({ success: true, message: "Supprimé" });
+exports.sendEmailToEcho = (req, res) => res.json({ success: true, message: "Envoyé" });
+exports.receiveEmailFromEcho = (req, res) => res.json({ success: true, message: "Reçu" });

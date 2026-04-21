@@ -16,7 +16,7 @@ const DocumentSchema = new mongoose.Schema({
     type: String,
     trim: true
   },
-  
+ 
   // Classification automatique
   category: {
     type: String,
@@ -27,7 +27,7 @@ const DocumentSchema = new mongoose.Schema({
     type: String,
     trim: true
   },
-  
+ 
   // Sécurité et accès
   confidentialityLevel: {
     type: String,
@@ -38,7 +38,7 @@ const DocumentSchema = new mongoose.Schema({
     type: String,
     enum: ['admin', 'manager', 'employee', 'hr', 'finance', 'legal', 'marketing', 'technical']
   }],
-  
+ 
   // Métadonnées fichier
   filePath: {
     type: String,
@@ -57,7 +57,7 @@ const DocumentSchema = new mongoose.Schema({
     required: true,
     unique: true
   },
-  
+ 
   // Tags et recherche
   tags: [{
     type: String,
@@ -67,7 +67,7 @@ const DocumentSchema = new mongoose.Schema({
     type: String,
     text: true // Index de recherche textuelle
   },
-  
+ 
   // Dates importantes
   uploadedAt: {
     type: Date,
@@ -85,7 +85,7 @@ const DocumentSchema = new mongoose.Schema({
     type: Date,
     default: Date.now
   },
-  
+ 
   // Utilisateurs
   uploadedBy: {
     type: mongoose.Schema.Types.ObjectId,
@@ -96,7 +96,7 @@ const DocumentSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User'
   },
-  
+ 
   // Priorité et statut
   priority: {
     type: String,
@@ -108,7 +108,7 @@ const DocumentSchema = new mongoose.Schema({
     enum: ['active', 'archived', 'deleted', 'expired'],
     default: 'active'
   },
-  
+ 
   // Versioning
   version: {
     type: Number,
@@ -127,7 +127,7 @@ const DocumentSchema = new mongoose.Schema({
     type: String,
     trim: true
   },
-  
+ 
   // Classification IA
   aiClassification: {
     confidence: {
@@ -145,7 +145,7 @@ const DocumentSchema = new mongoose.Schema({
       default: 'dexo-agent-v1'
     }
   },
-  
+ 
   // Détection de doublons
   duplicateInfo: {
     isDuplicate: {
@@ -176,7 +176,7 @@ const DocumentSchema = new mongoose.Schema({
       reason: String
     }]
   },
-  
+ 
   // Partage et permissions
   sharedWith: [{
     user: {
@@ -196,7 +196,7 @@ const DocumentSchema = new mongoose.Schema({
       ref: 'User'
     }
   }],
-  
+ 
   // Workflow n8n
   n8nWorkflows: [{
     workflowName: String,
@@ -207,7 +207,7 @@ const DocumentSchema = new mongoose.Schema({
     },
     result: mongoose.Schema.Types.Mixed
   }],
-  
+ 
   // Métadonnées personnalisées
   customMetadata: {
     type: mongoose.Schema.Types.Mixed,
@@ -220,9 +220,9 @@ const DocumentSchema = new mongoose.Schema({
 });
 
 // Index pour la recherche
-DocumentSchema.index({ 
-  filename: 'text', 
-  originalName: 'text', 
+DocumentSchema.index({
+  filename: 'text',
+  originalName: 'text',
   searchableContent: 'text',
   tags: 'text'
 });
@@ -267,7 +267,7 @@ DocumentSchema.methods.updateLastAccess = function() {
 DocumentSchema.methods.createVersion = function(newContent, userId, comment) {
   // Marquer la version actuelle comme non-latest
   this.isLatestVersion = false;
-  
+ 
   // Créer une nouvelle version
   const newVersion = new this.constructor({
     ...this.toObject(),
@@ -280,7 +280,7 @@ DocumentSchema.methods.createVersion = function(newContent, userId, comment) {
     lastModified: new Date(),
     searchableContent: newContent
   });
-  
+ 
   return Promise.all([this.save(), newVersion.save()]);
 };
 
@@ -289,21 +289,21 @@ DocumentSchema.methods.checkAccess = function(userId, userRoles = []) {
   if (this.uploadedBy.toString() === userId.toString()) {
     return { hasAccess: true, reason: 'owner' };
   }
-  
+ 
   // Vérifier les rôles d'accès
   const hasRoleAccess = this.accessRoles.some(role => userRoles.includes(role));
   if (hasRoleAccess) {
     return { hasAccess: true, reason: 'role' };
   }
-  
+ 
   // Vérifier le partage direct
-  const sharedAccess = this.sharedWith.find(share => 
+  const sharedAccess = this.sharedWith.find(share =>
     share.user.toString() === userId.toString()
   );
   if (sharedAccess) {
     return { hasAccess: true, reason: 'shared', role: sharedAccess.role };
   }
-  
+ 
   return { hasAccess: false, reason: 'no_permission' };
 };
 
@@ -318,11 +318,11 @@ DocumentSchema.statics.findExpired = function() {
 DocumentSchema.statics.findExpiringSoon = function(days = 30) {
   const futureDate = new Date();
   futureDate.setDate(futureDate.getDate() + days);
-  
+ 
   return this.find({
-    expirationDate: { 
+    expirationDate: {
       $gte: new Date(),
-      $lte: futureDate 
+      $lte: futureDate
     },
     status: 'active'
   });
@@ -333,7 +333,7 @@ DocumentSchema.statics.searchDocuments = function(query, userRoles = [], userId 
     $text: { $search: query },
     status: 'active'
   };
-  
+ 
   // Filtrer par accès utilisateur
   if (userId) {
     searchCriteria.$or = [
@@ -342,7 +342,7 @@ DocumentSchema.statics.searchDocuments = function(query, userRoles = [], userId 
       { 'sharedWith.user': userId }
     ];
   }
-  
+ 
   return this.find(searchCriteria, { score: { $meta: 'textScore' } })
     .sort({ score: { $meta: 'textScore' } });
 };

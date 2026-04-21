@@ -1,4 +1,4 @@
-﻿// services/spamFilter.js
+// services/spamFilter.js
 const { langchainConfig } = require('../config/langchainConfig');
 
 class SpamFilter {

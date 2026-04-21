@@ -1,6 +1,11 @@
-﻿const groqAgent = require('../services/groqAgent');
+const groqAgent = require('../services/groqAgent');
 
 const validateMessage = (req, res, next) => {
+  // GET /stats, GET /history, etc. n'ont pas de body « message »
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) {
+    return next();
+  }
+
   const { message } = req.body;
   if (!message) {
     return res.status(400).json({ error: 'Message requis' });
@@ -20,12 +25,12 @@ const quickSpamGuard = async (req, res, next) => {
 
   try {
     console.log('🤖 Groq analyse le message...');
-    const analysis = await groqAgent.analyze(message, { 
-      userId: req.body.userId 
+    const analysis = await groqAgent.analyze(message, {
+      userId: req.body.userId
     });
-    
+   
     console.log('📊 Résultat IA:', JSON.stringify(analysis, null, 2));
-    
+   
     if (analysis.isSpam && analysis.confidence > 0.6) {
       return res.status(403).json({
         error: 'Message bloqué',
@@ -34,7 +39,7 @@ const quickSpamGuard = async (req, res, next) => {
         confidence: analysis.confidence
       });
     }
-    
+   
     req.messageAnalysis = analysis;
     next();
   } catch (error) {
@@ -55,7 +60,7 @@ const processingTimeout = (req, res, next) => {
       res.status(504).json({ error: 'Timeout - traitement trop long' });
     }
   }, 30000);
-  
+ 
   res.on('finish', () => clearTimeout(timeout));
   next();
 };

@@ -1,4 +1,4 @@
-﻿const { ChatGroq } = require("@langchain/groq");
+const { ChatGroq } = require("@langchain/groq");
 
 class EchoAgent {
   constructor() {
