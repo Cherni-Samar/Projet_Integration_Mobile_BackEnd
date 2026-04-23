@@ -4,7 +4,14 @@
   "private": true,
   "scripts": {
     "start": "node app.js",
-    "dev": "nodemon app.js"
+    "dev": "nodemon app.js",
+    "test": "node test-integration.js",
+    "test:verbose": "node test-integration.js --verbose",
+    "test:json": "node test-integration.js --reporter=json",
+    "health-check": "node health-check.js",
+    "deploy": "node deploy.js",
+    "test-daily": "curl http://localhost:3000/api/kash/test-daily",
+    "test-weekly": "curl http://localhost:3000/api/kash/test-weekly"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
@@ -14,10 +21,11 @@
     "axios": "^1.13.6",
     "bcryptjs": "^3.0.3",
     "body-parser": "^2.2.2",
+    "cheerio": "^1.2.0",
     "cookie-parser": "~1.4.4",
     "cors": "^2.8.6",
     "debug": "~2.6.9",
-    "dotenv": "^17.3.1",
+    "dotenv": "^17.4.2",
     "express": "~4.16.1",
     "express-validator": "^7.3.1",
     "form-data": "^4.0.5",

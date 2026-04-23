@@ -1,6 +1,10 @@
 const express = require('express');
 const router = express.Router();
 const echoController = require('../controllers/echoController');
+const imageProxyController = require('../controllers/imageProxyController');
+
+// Image proxy route
+router.get('/image-proxy', imageProxyController.proxyImage);
 
 // Routes existantes
 router.post('/analyser', echoController.analyser);
