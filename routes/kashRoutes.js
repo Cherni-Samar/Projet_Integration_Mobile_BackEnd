@@ -29,7 +29,11 @@ router.get('/expenses', auth, kashController.getExpenses);
 // Budget Management
 router.get('/budget', auth, kashController.getBudget);
 router.post('/budget', auth, kashController.setBudget);
+router.post('/budget/create', auth, kashController.createBudget);
 router.post('/recalculate-budget', auth, kashController.recalculateBudget);
+
+// Hiring Feasibility Check
+router.get('/check-hiring', auth, kashController.checkHiringFeasibility);
 
 // Reminders
 router.get('/reminders', auth, kashController.getReminders);

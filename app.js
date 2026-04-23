@@ -30,6 +30,7 @@ const errorHandler = require('./middleware/errorHandler');
 const staffingWatcher = require('./services/staffingWatcher');
 const { startEchoSocialMediaAutonomy } = require('./services/echoLinkedInAutonomy');
 const { startKashCron, triggerDailyEmailNow, triggerWeeklyEmailNow } = require('./cron/kashCron');
+const ProductCampaignScheduler = require('./services/productCampaignScheduler.service');
 require('./services/automatedBriefing');
 
 // 1. Connexion MongoDB
@@ -101,6 +102,8 @@ app.listen(PORT, '0.0.0.0', () => {
   startEchoSocialMediaAutonomy();
   // Lancer les cron jobs Kash
   startKashCron();
+  // Démarrer le scheduler de campagnes produits
+  ProductCampaignScheduler.startScheduler();
 });
 
 module.exports = app;
