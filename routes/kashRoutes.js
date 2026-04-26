@@ -40,4 +40,26 @@ router.patch('/reminders/:id/mark-paid', auth, kashController.markReminderPaid);
 router.post('/employee/upload', employeeAuth, upload.single('receipt'), kashController.submitEmployeeExpense);
 router.get('/check-hiring', auth, kashController.checkHiringFeasibility);
 router.post('/staffing-cost-analysis', kashController.staffingCostAnalysis);
+router.post('/staffing-allocation-analysis', kashController.staffingAllocationAnalysis);
+router.post('/admin/test-daily', auth, async (req, res) => {
+  try {
+    const { triggerDailyEmailNow } = require('../cron/kashCron');
+    await triggerDailyEmailNow(req.user.id);
+
+    res.json({ success: true, message: 'Daily report envoyé' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+router.post('/admin/test-weekly', auth, async (req, res) => {
+  try {
+    const { triggerWeeklyEmailNow } = require('../cron/kashCron');
+    await triggerWeeklyEmailNow(req.user.id);
+
+    res.json({ success: true, message: 'Weekly report envoyé' });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 module.exports = router;

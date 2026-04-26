@@ -1594,4 +1594,151 @@ const remaining =
       error: err.message,
     });
   }
+
+};
+exports.staffingAllocationAnalysis = async (req, res) => {
+  try {
+    const { userId, needs = [] } = req.body;
+
+    if (!userId || !Array.isArray(needs) || needs.length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'userId et needs requis',
+      });
+    }
+
+    const salariesBudget = await Budget.findOne({
+      managerId: userId,
+      category: 'Salaries',
+      isActive: true,
+    }).lean();
+
+    if (!salariesBudget) {
+      return res.json({
+        success: true,
+        allocation: {
+          approved: [],
+          blocked: needs.map(n => ({
+            department: n.department,
+            requested: Number(n.missing || 0),
+            blocked: Number(n.missing || 0),
+            reason: 'Aucun budget Salaries trouvé',
+          })),
+          budget: null,
+          recommendation: 'Créer un budget Salaries avant de recruter.',
+        },
+      });
+    }
+
+    const priorities = {
+      Tech: 5,
+      Finance: 4,
+      Operations: 3,
+      Marketing: 2,
+      Other: 1,
+    };
+
+    let remainingBudget = salariesBudget.limit - salariesBudget.spent;
+
+    const enrichedNeeds = [];
+
+    for (const need of needs) {
+      const department = need.department;
+      const missing = Number(need.missing || 0);
+
+      if (!department || missing <= 0) continue;
+
+      const employees = await Employee.find({
+        ceo_id: userId,
+        department,
+        status: 'active',
+      })
+        .select('+salary')
+        .lean();
+
+      const salaries = employees
+        .map(e => Number(e.salary || 0))
+        .filter(s => s > 0);
+
+      const avgSalary =
+        salaries.length > 0
+          ? salaries.reduce((sum, s) => sum + s, 0) / salaries.length
+          : 2500;
+
+      enrichedNeeds.push({
+        department,
+        requested: missing,
+        avgSalary,
+        priority: priorities[department] || priorities.Other,
+      });
+    }
+
+    // priorité 1 : donner au moins 1 recrutement aux départements critiques
+    enrichedNeeds.sort((a, b) => b.priority - a.priority);
+
+    const approved = [];
+    const blocked = [];
+
+    for (const need of enrichedNeeds) {
+      let approvedCount = 0;
+
+      for (let i = 0; i < need.requested; i++) {
+        if (remainingBudget >= need.avgSalary) {
+          approvedCount += 1;
+          remainingBudget -= need.avgSalary;
+        } else {
+          break;
+        }
+      }
+
+      if (approvedCount > 0) {
+        approved.push({
+          department: need.department,
+          requested: need.requested,
+          approved: approvedCount,
+          avgSalary: need.avgSalary,
+          estimatedCost: approvedCount * need.avgSalary,
+          priority: need.priority,
+        });
+      }
+
+      const blockedCount = need.requested - approvedCount;
+
+      if (blockedCount > 0) {
+        blocked.push({
+          department: need.department,
+          requested: need.requested,
+          blocked: blockedCount,
+          avgSalary: need.avgSalary,
+          missingBudget: Math.max(0, need.avgSalary * blockedCount - remainingBudget),
+          reason: 'Budget Salaries insuffisant',
+          priority: need.priority,
+        });
+      }
+    }
+
+    return res.json({
+      success: true,
+      allocation: {
+        approved,
+        blocked,
+        budget: {
+          limit: salariesBudget.limit,
+          spent: salariesBudget.spent,
+          initialRemaining: salariesBudget.limit - salariesBudget.spent,
+          finalRemaining: remainingBudget,
+          currency: salariesBudget.currency,
+        },
+        recommendation:
+          approved.length > 0
+            ? `Kash recommande de lancer ${approved.reduce((s, a) => s + a.approved, 0)} recrutement(s) selon la priorité métier.`
+            : 'Kash bloque tous les recrutements : budget Salaries insuffisant.',
+      },
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      error: err.message,
+    });
+  }
 };

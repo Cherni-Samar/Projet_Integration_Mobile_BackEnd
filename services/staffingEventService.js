@@ -6,12 +6,14 @@ const mailService = require('../utils/emailService');
 const ActivityLog = require('../models/ActivityLog');
 
 const triggerStaffingForUser = async (userId) => {
-  console.log(`🧠 [HERA EVENT] Analyse staffing pour user ${userId}`);
+  console.log(`🧠 [HERA EVENT] Analyse staffing globale pour user ${userId}`);
 
   const user = await User.findById(userId);
   if (!user || !user.workforceSettings?.length) return;
-  let approvedRecruitmentCost = 0;
 
+  const needs = [];
+
+  // 1. Collecter tous les besoins
   for (const dept of user.workforceSettings) {
     const department = dept.department;
     const target = Number(dept.targetCount || 0);
@@ -35,31 +37,163 @@ const triggerStaffingForUser = async (userId) => {
 
     if (alreadyNotified) continue;
 
-    const mailContent =
-      `Besoin de recrutement en ${department}. ` +
-      `L'effectif actuel est à ${current}/${target}. ` +
-      `Il manque ${missing} collaborateur(s).`;
+    needs.push({
+      department,
+      current,
+      target,
+      missing,
+    });
+  }
 
-    const subject = `📢 ALERTE RECRUTEMENT : ${department}`;
+  if (needs.length === 0) {
+    console.log('✅ Aucun besoin staffing détecté');
+    return;
+  }
+
+  // 2. Log Hera → Kash
+  await ActivityLog.logActivity({
+    sourceAgent: 'hera',
+    targetAgent: 'kash',
+    actionType: 'STAFFING_ALERT',
+    title: `Hera détecte ${needs.length} besoin(s) de staffing`,
+    description: needs
+      .map(n => `${n.department}: ${n.current}/${n.target}, manque ${n.missing}`)
+      .join('\n'),
+    status: 'success',
+    priority: 'high',
+    metadata: {
+      userId: user._id.toString(),
+      additionalData: { needs },
+    },
+  });
+
+  // 3. Appeler Kash allocation globale
+  let allocation;
+
+  try {
+    await ActivityLog.logActivity({
+      sourceAgent: 'kash',
+      targetAgent: 'hera',
+      actionType: 'BUDGET_ANALYSIS',
+      title: 'Kash analyse l’allocation globale du budget Salaries',
+      description: 'Analyse globale des besoins de recrutement par priorité métier.',
+      status: 'in_progress',
+      priority: 'medium',
+      metadata: {
+        userId: user._id.toString(),
+        additionalData: { needs },
+      },
+    });
+
+    const kashBaseUrl =
+      process.env.KASH_API_URL || 'http://localhost:3000/api/kash';
+
+    const kashResponse = await fetch(`${kashBaseUrl}/staffing-allocation-analysis`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        userId: user._id.toString(),
+        needs,
+      }),
+    });
+
+    const kashResult = await kashResponse.json();
+
+    if (!kashResult.success) {
+      await ActivityLog.logActivity({
+        sourceAgent: 'kash',
+        targetAgent: 'hera',
+        actionType: 'BUDGET_ANALYSIS',
+        title: 'Kash allocation échouée',
+        description: kashResult.message || kashResult.error || 'Erreur allocation budget.',
+        status: 'failed',
+        priority: 'high',
+        metadata: {
+          userId: user._id.toString(),
+          additionalData: kashResult,
+        },
+      });
+
+      return;
+    }
+
+    allocation = kashResult.allocation;
 
     await ActivityLog.logActivity({
-      sourceAgent: 'hera',
-      targetAgent: 'kash',
-      actionType: 'STAFFING_ALERT',
-      title: `Hera détecte un manque en ${department}`,
-      description: mailContent,
-      status: 'success',
+      sourceAgent: 'kash',
+      targetAgent: 'hera',
+      actionType: 'BUDGET_ANALYSIS',
+      title: 'Kash a terminé l’allocation staffing',
+      description: allocation.recommendation,
+      status: allocation.approved?.length ? 'success' : 'failed',
+      priority: allocation.approved?.length ? 'medium' : 'high',
+      metadata: {
+        userId: user._id.toString(),
+        additionalData: allocation,
+      },
+    });
+  } catch (err) {
+    console.warn('⚠️ Kash allocation error:', err.message);
+
+    await ActivityLog.logActivity({
+      sourceAgent: 'kash',
+      targetAgent: 'hera',
+      actionType: 'BUDGET_ANALYSIS',
+      title: 'Erreur Kash allocation',
+      description: err.message,
+      status: 'failed',
       priority: 'high',
       metadata: {
         userId: user._id.toString(),
-        department,
-        additionalData: {
-          current,
-          target,
-          missing,
-        },
       },
     });
+
+    return;
+  }
+
+  // 4. Créer logs/actions pour les recrutements bloqués
+  for (const blocked of allocation.blocked || []) {
+    await HeraAction.create({
+      ceo_id: user._id,
+      action_type: 'performance_alert',
+      triggered_by: 'kash_auto',
+      details: {
+        type: 'staffing_budget_blocked',
+        department: blocked.department,
+        kashAnalysis: blocked,
+      },
+    });
+
+    await ActivityLog.logActivity({
+      sourceAgent: 'kash',
+      targetAgent: 'hera',
+      actionType: 'BUDGET_ANALYSIS',
+      title: `Kash bloque ${blocked.blocked} recrutement(s) en ${blocked.department}`,
+      description: blocked.reason || 'Budget Salaries insuffisant.',
+      status: 'failed',
+      priority: 'high',
+      metadata: {
+        userId: user._id.toString(),
+        department: blocked.department,
+        additionalData: blocked,
+      },
+    });
+
+    console.log(`🚫 Recrutement bloqué pour ${blocked.department}: ${blocked.blocked}`);
+  }
+
+  // 5. Déclencher Echo uniquement pour les approuvés
+  for (const approved of allocation.approved || []) {
+    const originalNeed = needs.find(n => n.department === approved.department);
+
+    if (!originalNeed || approved.approved <= 0) continue;
+
+    const mailContent =
+      `Besoin de recrutement validé en ${approved.department}. ` +
+      `Kash a approuvé ${approved.approved}/${approved.requested} recrutement(s). ` +
+      `Coût estimé : ${approved.estimatedCost} TND.`;
+
+    const subject = `📢 RECRUTEMENT VALIDÉ : ${approved.department}`;
 
     const heraEmail = await InboxEmail.create({
       ownerId: user._id,
@@ -79,145 +213,46 @@ const triggerStaffingForUser = async (userId) => {
       action_type: 'absence_alert',
       triggered_by: 'hera_auto',
       details: {
-        department,
-        current,
-        target,
-        missing,
+        department: approved.department,
+        current: originalNeed.current,
+        target: originalNeed.target,
+        missing: originalNeed.missing,
+        approvedCount: approved.approved,
         message: mailContent,
         emailId: heraEmail._id,
       },
     });
 
-    let canAfford = false;
-    let kashAnalysis = null;
+    await HeraAction.create({
+      ceo_id: user._id,
+      action_type: 'performance_alert',
+      triggered_by: 'kash_auto',
+      details: {
+        type: 'staffing_budget_approved',
+        department: approved.department,
+        kashAnalysis: approved,
+      },
+    });
 
-    try {
-      await ActivityLog.logActivity({
-        sourceAgent: 'kash',
-        targetAgent: 'hera',
-        actionType: 'BUDGET_ANALYSIS',
-        title: `Kash analyse le budget ${department}`,
-        description: `Analyse du budget Salaries pour ${missing} recrutement(s).`,
-        status: 'in_progress',
-        priority: 'medium',
-        metadata: {
-          userId: user._id.toString(),
-          department,
-          additionalData: {
-            current,
-            target,
-            missing,
-          },
-        },
-      });
-
-      const kashBaseUrl =
-        process.env.KASH_API_URL || 'http://localhost:3000/api/kash';
-
-      const kashResponse = await fetch(`${kashBaseUrl}/staffing-cost-analysis`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-       body: JSON.stringify({
-  userId: user._id.toString(),
-  department,
-  currentCount: current,
-  targetCount: target,
-  missing,
-  alreadyApprovedCost: approvedRecruitmentCost,
-}),
-      });
-
-      const kashResult = await kashResponse.json();
-
-      if (!kashResult.success) {
-        await ActivityLog.logActivity({
-          sourceAgent: 'kash',
-          targetAgent: 'hera',
-          actionType: 'BUDGET_ANALYSIS',
-          title: `Kash n'a pas pu analyser ${department}`,
-          description: kashResult.message || kashResult.error || 'Erreur analyse budget.',
-          status: 'failed',
-          priority: 'high',
-          metadata: {
-            userId: user._id.toString(),
-            department,
-            additionalData: kashResult,
-          },
-        });
-
-        return;
-      }
-
-      kashAnalysis = kashResult.analysis;
-      canAfford = kashAnalysis?.canAfford === true;
-      if (canAfford) {
-  approvedRecruitmentCost += Number(kashAnalysis?.estimatedMonthlyCost || 0);
-}
-
-      await ActivityLog.logActivity({
-        sourceAgent: 'kash',
-        targetAgent: canAfford ? 'echo' : 'hera',
-        actionType: 'BUDGET_ANALYSIS',
-        title: canAfford
-          ? `Kash valide le recrutement en ${department}`
-          : `Kash bloque le recrutement en ${department}`,
-        description:
-          kashAnalysis?.recommendation ||
-          (canAfford
-            ? `Budget suffisant pour recruter ${missing} collaborateur(s).`
-            : `Budget insuffisant pour recruter ${missing} collaborateur(s).`),
-        status: canAfford ? 'success' : 'failed',
-        priority: canAfford ? 'medium' : 'high',
-        metadata: {
-          userId: user._id.toString(),
-          department,
-          additionalData: kashAnalysis,
-        },
-      });
-
-      await HeraAction.create({
-        ceo_id: user._id,
-        action_type: 'performance_alert',
-        triggered_by: 'kash_auto',
-        details: {
-          type: canAfford
-            ? 'staffing_budget_approved'
-            : 'staffing_budget_blocked',
-          department,
-          kashAnalysis,
-        },
-      });
-    } catch (e) {
-      console.warn('⚠️ Kash error:', e.message);
-
-      await ActivityLog.logActivity({
-        sourceAgent: 'kash',
-        targetAgent: 'hera',
-        actionType: 'BUDGET_ANALYSIS',
-        title: `Erreur Kash pour ${department}`,
-        description: e.message,
-        status: 'failed',
-        priority: 'high',
-        metadata: {
-          userId: user._id.toString(),
-          department,
-        },
-      });
-
-      return;
-    }
-
-    if (!canAfford) {
-      console.log(`🚫 Recrutement bloqué pour ${department}`);
-      continue;
-    }
-
-    console.log(`✅ Kash validé, Echo peut recruter pour ${department}`);
+    await ActivityLog.logActivity({
+      sourceAgent: 'kash',
+      targetAgent: 'echo',
+      actionType: 'BUDGET_ANALYSIS',
+      title: `Kash valide ${approved.approved} recrutement(s) en ${approved.department}`,
+      description: `Budget validé pour ${approved.approved}/${approved.requested} recrutement(s).`,
+      status: 'success',
+      priority: 'medium',
+      metadata: {
+        userId: user._id.toString(),
+        department: approved.department,
+        additionalData: approved,
+      },
+    });
 
     await mailService.sendStaffingAlert('echo-agent@e-team.com', {
-      department,
-      count: current,
-      max: target,
+      department: approved.department,
+      count: originalNeed.current,
+      max: originalNeed.target,
       message: mailContent,
     });
 
@@ -231,11 +266,11 @@ const triggerStaffingForUser = async (userId) => {
         body: JSON.stringify({
           userId: user._id.toString(),
           emailId: heraEmail._id.toString(),
-          department,
-          currentCount: current,
-          maxCapacity: target,
-          shortage: missing,
-          kashAnalysis,
+          department: approved.department,
+          currentCount: originalNeed.current,
+          maxCapacity: originalNeed.target,
+          shortage: approved.approved,
+          kashAnalysis: approved,
         }),
       });
 
@@ -243,22 +278,19 @@ const triggerStaffingForUser = async (userId) => {
         sourceAgent: 'echo',
         targetAgent: 'system',
         actionType: 'RECRUITMENT',
-        title: `Echo lance le recrutement en ${department}`,
-        description: `Recrutement autorisé par Kash pour ${missing} collaborateur(s).`,
+        title: `Echo lance le recrutement en ${approved.department}`,
+        description: `Echo lance ${approved.approved} recrutement(s) validé(s) par Kash.`,
         status: 'success',
         priority: 'high',
         metadata: {
           userId: user._id.toString(),
-          department,
+          department: approved.department,
           emailId: heraEmail._id.toString(),
-          additionalData: {
-            missing,
-            kashAnalysis,
-          },
+          additionalData: approved,
         },
       });
 
-      console.log(`💼 Echo déclenché pour ${department}`);
+      console.log(`💼 Echo déclenché pour ${approved.department}`);
     } catch (err) {
       console.warn('⚠️ Echo error:', err.message);
 
@@ -266,13 +298,13 @@ const triggerStaffingForUser = async (userId) => {
         sourceAgent: 'echo',
         targetAgent: 'system',
         actionType: 'RECRUITMENT',
-        title: `Echo a échoué pour ${department}`,
+        title: `Echo a échoué pour ${approved.department}`,
         description: err.message,
         status: 'failed',
         priority: 'high',
         metadata: {
           userId: user._id.toString(),
-          department,
+          department: approved.department,
           emailId: heraEmail._id.toString(),
         },
       });

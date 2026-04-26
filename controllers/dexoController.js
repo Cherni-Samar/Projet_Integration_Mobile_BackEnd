@@ -1,29 +1,36 @@
 // controllers/dexoController.js
 const dexoService = require('../services/dexoService');
 const HeraAction = require('../models/HeraAction');
+const heraAgent = require('../services/hera.agent');
 const ProjectOpportunity = require('../models/ProjectOpportunity');
 const User = require('../models/User');
 const Employee = require('../models/Employee');
 const { triggerStaffingForUser } = require('../services/staffingEventService');
+const Document = require('../models/Document');
+const crypto = require('crypto');
+const pdfGenerator = require('../services/pdfGenerator'); 
 // 1. Dashboard & Briefing
 exports.getDailyCheckUp = async (req, res) => {
   try {
-  const report = await dexoService.generateDailyReport(req.user.id);
+    const report = await generateBriefingLogic();
 
     const actions = await HeraAction.find({
-      ceo_id: req.user.id
+      ceo_id: req.user.id,
     })
       .sort({ created_at: -1 })
-      .limit(3);
+      .limit(3)
+      .populate('employee_id');
 
     res.json({
       success: true,
       report,
-      rawActions: actions
+      rawActions: actions,
     });
-
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({
+      success: false,
+      error: err.message,
+    });
   }
 };
 
@@ -243,3 +250,147 @@ res.json({
     });
   }
 };
+// ===============================
+// ✅ DEXO BRIEFING LOGIC (IMPORTANT)
+// ===============================
+exports.getDailyCheckUp = async (req, res) => {
+  try {
+    const report = await generateBriefingLogic();
+
+    const actions = await HeraAction.find()
+      .sort({ created_at: -1 })
+      .limit(3)
+      .populate('employee_id');
+
+    res.json({
+      success: true,
+      report,
+      rawActions: actions,
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+};
+const generateBriefingLogic = async () => {
+  const actions = await HeraAction.find()
+    .sort({ created_at: -1 })
+    .limit(50)
+    .populate('employee_id');
+
+  if (!actions || actions.length === 0) {
+    return "🏢 Statut calme. Aucun événement majeur à signaler.";
+  }
+
+  const staffingAlerts = actions.filter(
+    a => a.action_type === 'absence_alert'
+  );
+
+  const kashDecisions = actions.filter(
+    a => a.action_type === 'performance_alert'
+  );
+
+  const approved = kashDecisions.filter(
+    a => a.details?.type === 'staffing_budget_approved'
+  );
+
+  const blocked = kashDecisions.filter(
+    a => a.details?.type === 'staffing_budget_blocked'
+  );
+
+  const approvedMap = {};
+  const blockedMap = {};
+
+  for (const a of approved) {
+    const dept = a.details?.department;
+    const approvedCount =
+      Number(a.details?.kashAnalysis?.approved || a.details?.kashAnalysis?.approvedCount || 0);
+
+    if (!dept) continue;
+
+    approvedMap[dept] = {
+      department: dept,
+      approved: approvedCount || 1,
+      estimatedCost: Number(a.details?.kashAnalysis?.estimatedCost || 0),
+    };
+  }
+
+  for (const a of blocked) {
+    const dept = a.details?.department;
+    const blockedCount =
+      Number(a.details?.kashAnalysis?.blocked || a.details?.kashAnalysis?.blockedCount || 0);
+
+    if (!dept) continue;
+
+    blockedMap[dept] = {
+      department: dept,
+      blocked: blockedCount || 1,
+      reason: a.details?.kashAnalysis?.reason || 'Budget Salaries insuffisant',
+    };
+  }
+
+  const fullyApproved = [];
+  const partiallyApproved = [];
+  const fullyBlocked = [];
+
+  const allDepartments = new Set([
+    ...Object.keys(approvedMap),
+    ...Object.keys(blockedMap),
+  ]);
+
+  for (const dept of allDepartments) {
+    const approvedDept = approvedMap[dept];
+    const blockedDept = blockedMap[dept];
+
+    if (approvedDept && blockedDept) {
+      partiallyApproved.push({
+        department: dept,
+        approved: approvedDept.approved,
+        blocked: blockedDept.blocked,
+      });
+    } else if (approvedDept) {
+      fullyApproved.push(approvedDept);
+    } else if (blockedDept) {
+      fullyBlocked.push(blockedDept);
+    }
+  }
+
+  const documents = actions.filter(a => a.action_type === 'doc_request');
+  const onboarding = actions.filter(a => a.action_type === 'onboarding_started');
+
+  let report = `📌 Briefing CEO DEXO\n\n`;
+
+  report += `Hera a détecté ${staffingAlerts.length} besoin(s) de staffing.\n`;
+
+  if (fullyApproved.length > 0) {
+    report += `Kash a validé totalement le recrutement pour : ${fullyApproved
+      .map(d => d.department)
+      .join(', ')}.\n`;
+  }
+
+  if (partiallyApproved.length > 0) {
+    report += `Kash a validé partiellement : ${partiallyApproved
+      .map(d => `${d.department} (${d.approved} validé(s), ${d.blocked} bloqué(s))`)
+      .join(', ')}.\n`;
+  }
+
+  if (fullyBlocked.length > 0) {
+    report += `Kash a bloqué le recrutement pour : ${fullyBlocked
+      .map(d => d.department)
+      .join(', ')} à cause d’un budget Salaries insuffisant.\n`;
+  }
+
+  if (documents.length > 0) {
+    report += `DEXO a traité ${documents.length} demande(s) documentaire(s).\n`;
+  }
+
+  if (onboarding.length > 0) {
+    report += `${onboarding.length} onboarding(s) ont été lancés.\n`;
+  }
+
+  report += `\n🎯 Recommandation : exécuter les recrutements validés, prioriser les départements partiellement approuvés, puis réviser le budget Salaries pour débloquer les postes restants.`;
+
+  return report;
+};
+
+exports.generateBriefingLogic = generateBriefingLogic;
+

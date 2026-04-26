@@ -44,6 +44,7 @@ router.post('/admin/approve-project', dexo.approveProject);
 // Dans routes/heraRoutes.js
 router.get('/admin/agent-interactions', hera.getAgentInteractions);
 router.get('/admin/agent-interactions/stats', hera.getAgentInteractionStats);
+
 router.get('/admin/trigger-vocal', async (req, res) => {
   try {
     await vocalAuto.runAutomatedVocalBriefing();
