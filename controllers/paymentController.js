@@ -29,7 +29,7 @@ exports.createPaymentIntent = async (req, res, next) => {
             currency: 'eur',
             automatic_payment_methods: { enabled: true },
             metadata: {
-                userId: req.user.id, // ID de l'utilisateur qui paie
+userId: req.user.id || req.user.userId || req.user._id,
                 packId: packId,
                 creditsToAdd: selectedPack.credits.toString() 
             },
@@ -64,8 +64,10 @@ exports.confirmPayment = async (req, res) => {
             const userId = paymentIntent.metadata.userId;
             const packId = paymentIntent.metadata.packId;
 
-            if (req.user?.id && req.user.id !== userId) {
-                return res.status(403).json({
+const authUserId = req.user.id || req.user.userId || req.user._id;
+
+if (authUserId && authUserId.toString() !== userId.toString()) {
+                    return res.status(403).json({
                     success: false,
                     message: 'Forbidden',
                 });
@@ -139,7 +141,7 @@ exports.confirmPayment = async (req, res) => {
             const updatedUser = await User.findOneAndUpdate(
                 { _id: userId, processedPaymentIntents: { $ne: paymentIntentId } },
                 update,
-                { new: true }
+{ returnDocument: 'after' }
             );
 
             if (!updatedUser) {

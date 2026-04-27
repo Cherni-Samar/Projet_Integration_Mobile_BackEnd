@@ -3,6 +3,7 @@ const express = require('express');
 const path = require('path'); // ✅ AJOUTÉ pour gérer les chemins de fichiers
 const cors = require('cors');
 const mongoose = require('mongoose');
+const fs = require('fs');
 
 // 1. Initialize App First
 const app = express();
@@ -27,6 +28,7 @@ const paymentRoutes = require('./routes/paymentRoutes');
 const kashRoutes = require('./routes/kashRoutes');
 const activityRoutes = require('./routes/activityRoutes');
 const dexoRoutes = require('./routes/dexoRoutes');
+const predictionRoutes = require('./routes/predictionRoutes');
 
 const errorHandler = require('./middleware/errorHandler');
 const { startEchoSocialMediaAutonomy } = require('./services/echoLinkedInAutonomy');
@@ -87,6 +89,8 @@ app.use('/api/echo', echoRoutes);
 app.use('/api/kash', kashRoutes);
 app.use('/api/activities', activityRoutes);      
 app.use('/api/dexo', dexoRoutes);
+app.use('/api/predictions', predictionRoutes);  
+
 
 // ✅ KASH TEST ROUTES
 app.get('/api/kash/test-daily', async (req, res) => {

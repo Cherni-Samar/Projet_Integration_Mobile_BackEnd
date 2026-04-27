@@ -3,7 +3,12 @@ const mongoose = require('mongoose');
 const candidateSchema = new mongoose.Schema({
   name: { type: String, required: true },
   email: { type: String, required: true },
-  job_offer_id: { type: mongoose.Schema.Types.ObjectId, ref: 'JobOffer' },
+job_offer_id: { 
+  type: mongoose.Schema.Types.ObjectId, 
+  ref: 'JobOffer', 
+  default: null,
+  required: false  // ← important
+},
   status: { type: String, default: 'applied' },
   
   // ✅ C'EST ICI QUE LES FORMATIONS SONT STOCKÉES

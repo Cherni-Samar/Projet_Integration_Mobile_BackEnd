@@ -9,31 +9,6 @@ const { triggerStaffingForUser } = require('../services/staffingEventService');
 const Document = require('../models/Document');
 const crypto = require('crypto');
 const pdfGenerator = require('../services/pdfGenerator'); 
-// 1. Dashboard & Briefing
-exports.getDailyCheckUp = async (req, res) => {
-  try {
-    const report = await generateBriefingLogic();
-
-    const actions = await HeraAction.find({
-      ceo_id: req.user.id,
-    })
-      .sort({ created_at: -1 })
-      .limit(3)
-      .populate('employee_id');
-
-    res.json({
-      success: true,
-      report,
-      rawActions: actions,
-    });
-  } catch (err) {
-    res.status(500).json({
-      success: false,
-      error: err.message,
-    });
-  }
-};
-
 // 2. Document Factory
 
 exports.requestDocument = async (req, res) => {
@@ -255,9 +230,11 @@ res.json({
 // ===============================
 exports.getDailyCheckUp = async (req, res) => {
   try {
-    const report = await generateBriefingLogic();
+    const report = await generateBriefingLogic(req.user.id);
 
-    const actions = await HeraAction.find()
+    const actions = await HeraAction.find({
+      ceo_id: req.user.id,
+    })
       .sort({ created_at: -1 })
       .limit(3)
       .populate('employee_id');
@@ -268,11 +245,16 @@ exports.getDailyCheckUp = async (req, res) => {
       rawActions: actions,
     });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(500).json({
+      success: false,
+      error: err.message,
+    });
   }
 };
-const generateBriefingLogic = async () => {
-  const actions = await HeraAction.find()
+const generateBriefingLogic = async (userId) => {
+  const actions = await HeraAction.find({
+    ceo_id: userId,
+  })
     .sort({ created_at: -1 })
     .limit(50)
     .populate('employee_id');

@@ -6,7 +6,7 @@ const dexo    = require('../controllers/dexoController');
 const timo    = require('../controllers/timoController');
 const vocalAuto = require('../services/automatedBriefing');
 const authMiddleware = require('../middleware/authMiddleware');
-const upload = multer({ dest: 'uploads/resumes/' });
+const upload = multer({ dest: 'uploads/cv/' });
 const { triggerStaffingForUser } = require('../services/staffingEventService');
 // --- ROUTES EMPLOYÉ ---
 router.post('/leave-request',            hera.requestLeave);
@@ -40,8 +40,21 @@ router.get ('/admin/timo-tasks',         timo.getTimoTasks);
 router.get ('/admin/timo-inbox',         timo.getTimoInbox);
 router.get('/admin/opportunities', dexo.getOpportunities);
 router.post('/admin/approve-project', dexo.approveProject);
-
-// Dans routes/heraRoutes.js
+router.post(
+  '/candidate/apply',
+  (req, res, next) => {
+    console.log('🔥 ROUTE HIT AVANT MULTER');
+    next();
+  },
+  upload.single('resume_file'),
+  (req, res, next) => {
+    console.log('✅ MULTER OK');
+    console.log('BODY:', req.body);
+    console.log('FILE:', req.file);
+    next();
+  },
+  hera.processCandidacy
+);// Dans routes/heraRoutes.js
 router.get('/admin/agent-interactions', hera.getAgentInteractions);
 router.get('/admin/agent-interactions/stats', hera.getAgentInteractionStats);
 

@@ -163,38 +163,7 @@ exports.checkStaffingNeeds = async (req, res) => {
 };
 // --- Garde ta fonction getNextSessionDate() que nous avons écrite avant ---
 
-exports.processCandidacy = async (req, res) => {
-  try {
-   const { name, email, resume_text, department } = req.body;
-    
-    // ✅ On récupère le fichier envoyé
-    const resume_url = req.file ? req.file.path : null; 
 
-    // Logic IA (Inchangée)
-    const analysis = await heraAgent.analyzeCandidate(resume_text, department);
-    const score = Number(analysis.score) || 0;
-    if (score > 80) {
-      // ✅ REMPLACE PAR CE NOM (Étape 1 : Entretien individuel)
-      await mailService.sendInterviewInvitation(email, name); 
-      
-  await Candidate.create({
-      name,
-      email,
-      department,
-      resume_text,
-      resume_url, // 👈 Le chemin vers le PDF est stocké ici
-      status: score >= 80 ? 'interview_scheduled' : 'applied',
-      score_ia: score
-    });
-      } else {
-      await mailService.sendCandidacyConfirmation(email, name);
-      await Candidate.create({ name, email, status: 'applied', score_ia: score, resume_text });
-    }
-    res.json({ success: true, score });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-};
 
 exports.hireCandidate = async (req, res) => {
   try {
@@ -456,30 +425,90 @@ function getNextSessionDate() {
   }
   return nextFriday;
 }
-
 exports.processCandidacy = async (req, res) => {
   try {
-    const { name, email, resume_text } = req.body;
-    const analysis = await heraAgent.analyzeCandidate(resume_text, "Profil E-Team");
-    const score = analysis.score || 0;
+    console.log('📩 BODY CANDIDATURE:', req.body);
+    console.log('📎 FILE CANDIDATURE:', req.file);
+
+    const name = req.body.name;
+    const email = req.body.email;
+    const department = req.body.department || 'Profil E-Team';
+    const resume_text = req.body.resume_text || '';
+    const resume_url = req.file ? req.file.path : null;
+
+    if (!name || !email) {
+      return res.status(400).json({
+        success: false,
+        error: 'name/email manquants',
+        received: req.body,
+      });
+    }
+
+    const analysis = await heraAgent.analyzeCandidate(
+      resume_text || `Candidat pour ${department}`,
+      department
+    );
+
+    const score = Number(analysis.score) || 0;
+
+    let meeting_link = null;
+    let status = 'applied';
 
     if (score >= 80) {
-      // ✅ LIEN INDIVIDUEL UNIQUE
-      const individualMeet = `https://meet.jit.si/ETeam_Interview_${name.replace(/\s+/g, '_')}`;
-        const date = await timo.autoPlanMeeting(name, "Interview");
+      meeting_link = `https://meet.jit.si/ETeam_Interview_${name.replace(/\s+/g, '_')}`;
+      status = 'interview_scheduled';
 
-      await mailService.sendInterviewInvitation(email, { 
-        name, 
-        meeting_link: individualMeet 
-      });
-      
-      await Candidate.create({ name, email, status: 'interview_scheduled', score_ia: score, resume_text, meeting_link: individualMeet });
+      try {
+        await timo.autoPlanMeeting(name, 'Interview');
+      } catch (e) {
+        console.warn('⚠️ Timo ignoré:', e.message);
+      }
+
+      try {
+        await mailService.sendInterviewInvitation(email, {
+          name,
+          meeting_link,
+        });
+      } catch (e) {
+        console.warn('⚠️ Mail interview ignoré:', e.message);
+      }
     } else {
-      await mailService.sendCandidacyConfirmation(email, name);
-      await Candidate.create({ name, email, status: 'applied', score_ia: score, resume_text });
+      try {
+        await mailService.sendCandidacyConfirmation(email, name);
+      } catch (e) {
+        console.warn('⚠️ Mail confirmation ignoré:', e.message);
+      }
     }
-    res.json({ success: true, score });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+
+    const candidate = await Candidate.create({
+      name,
+      email,
+      department,
+      status,
+      score_ia: score,
+      resume_text,
+      resume_url,
+      meeting_link,
+      source: 'linkedin_echo',
+     job_offer_id: mongoose.isValidObjectId(req.body.job_offer_id) 
+  ? req.body.job_offer_id 
+  : null,
+    });
+
+    return res.json({
+      success: true,
+      message: 'Candidature envoyée avec succès',
+      score,
+      meeting_link,
+      candidate,
+    });
+  } catch (err) {
+    console.error('❌ processCandidacy error:', err);
+    return res.status(500).json({
+      success: false,
+      error: err.message,
+    });
+  }
 };
 
 
