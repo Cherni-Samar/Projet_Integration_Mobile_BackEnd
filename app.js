@@ -17,7 +17,7 @@ app.use(express.urlencoded({ extended: true }));
 
 // Import des Routes
 const employeeAuthRoutes = require('./routes/employeeAuth');
-const echoRoutes = require('./routes/echoRoutes');
+const echoRoutes = require('./routes/echoroutes');
 const authRoutes = require('./routes/authRoutes');
 const heraRoutes = require('./routes/heraRoutes');
 const emailRoutes = require('./routes/emailRoutes');
