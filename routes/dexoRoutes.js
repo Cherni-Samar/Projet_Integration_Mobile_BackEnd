@@ -1,0 +1,13 @@
+const express = require('express');
+const router = express.Router();
+const dexo = require('../controllers/dexoController');
+const authMiddleware = require('../middleware/authMiddleware');
+router.get('/checkup', authMiddleware, dexo.getDailyCheckUp);
+router.get('/document-actions', authMiddleware, dexo.getDocumentActions);
+router.get('/opportunities', authMiddleware, dexo.getOpportunities);
+router.post('/approve-project', authMiddleware, dexo.approveProject);
+router.post('/strategic-advice', dexo.getStrategicAdvice);
+router.post('/save-vision', dexo.saveVision);
+router.get('/workforce-settings', authMiddleware, dexo.getWorkforceSettings);
+router.patch('/workforce-settings', authMiddleware, dexo.updateWorkforceSettings);
+module.exports = router;

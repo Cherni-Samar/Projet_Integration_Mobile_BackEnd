@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>E-Team Recruitment Portal</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+:root {
+--lime: #CCFF00;
+--dark: #0A0A0A;
+--grey: #1A1A1A;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Inter', sans-serif; }
+
+body {
+background: var(--dark);
+color: white;
+display: flex;
+justify-content: center;
+align-items: center;
+min-height: 100vh;
+padding: 20px;
+}
+
+.form-container {
+background: var(--grey);
+padding: 40px;
+border-radius: 24px;
+box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+max-width: 450px;
+width: 100%;
+border: 1px solid rgba(204, 255, 0, 0.1);
+}
+
+.logo {
+color: var(--lime);
+font-weight: 800;
+font-size: 24px;
+margin-bottom: 10px;
+text-align: center;
+}
+
+h2 {
+margin-bottom: 25px;
+color: white;
+font-size: 20px;
+text-align: center;
+font-weight: 600;
+}
+
+.form-group { margin-bottom: 20px; }
+
+label {
+display: block;
+margin-bottom: 8px;
+color: #888;
+font-size: 12px;
+font-weight: 600;
+text-transform: uppercase;
+letter-spacing: 0.5px;
+}
+
+input, select, textarea {
+width: 100%;
+padding: 12px 16px;
+background: #252525;
+border: 1px solid #333;
+border-radius: 12px;
+font-size: 14px;
+color: white;
+transition: all 0.3s;
+}
+
+input:focus, select:focus, textarea:focus {
+outline: none;
+border-color: var(--lime);
+background: #2a2a2a;
+}
+
+textarea { resize: none; height: 100px; }
+
+button {
+width: 100%;
+padding: 15px;
+background: var(--lime);
+color: black;
+border: none;
+border-radius: 12px;
+font-size: 15px;
+font-weight: 800;
+cursor: pointer;
+margin-top: 10px;
+transition: transform 0.2s;
+}
+
+button:hover {
+transform: translateY(-2px);
+box-shadow: 0 5px 15px rgba(204, 255, 0, 0.3);
+}
+
+button:disabled { background: #444; color: #888; cursor: not-allowed; transform: none; }
+
+.message {
+margin-top: 20px;
+padding: 15px;
+border-radius: 12px;
+font-size: 13px;
+display: none;
+text-align: center;
+}
+
+.message.success { background: rgba(204, 255, 0, 0.1); color: var(--lime); border: 1px solid var(--lime); }
+.message.error { background: rgba(255, 0, 0, 0.1); color: #ff4444; border: 1px solid #ff4444; }
+
+.ai-badge {
+display: inline-block;
+background: rgba(204, 255, 0, 0.1);
+color: var(--lime);
+font-size: 10px;
+padding: 4px 8px;
+border-radius: 6px;
+margin-bottom: 15px;
+font-weight: 800;
+}
+</style>
+</head>
+<body>
+<div class="form-container">
+<div class="logo">🚀 E-TEAM</div>
+<div style="text-align: center;"><span class="ai-badge">ANALYSE PAR HERA IA</span></div>
+<h2>Rejoignez l'aventure</h2>
+<form id="applyForm">
+<div class="form-group">
+<label>Nom complet</label>
+<input type="text" id="name" required placeholder="Jean Dupont">
+</div>
+
+<div class="form-group">
+<label>Email professionnel</label>
+<input type="email" id="email" required placeholder="jean@exemple.com">
+</div>
+
+<div class="form-group">
+<label>Département & Poste</label>
+<select id="department" required>
+<option value="Tech">Développement Tech</option>
+<option value="Design">Design UX/UI</option>
+<option value="Marketing">Marketing Digital</option>
+<option value="RH">Ressources Humaines</option>
+<option value="Finance">Finance & Comptabilité</option>
+<option value="Support">Support Client</option>
+<option value="Management">Direction & Management</option>
+</select>
+</div>
+
+<div class="form-group">
+<label>Résumé de votre expérience (CV)</label>
+<textarea id="resume" required placeholder="Décrivez vos compétences clés pour l'analyse IA..."></textarea>
+</div>
+<div class="form-group">
+<label>Télécharger votre CV (PDF)</label>
+<input type="file" id="cvFile" accept=".pdf">
+</div>
+<button type="submit" id="submitBtn">Soumettre ma candidature</button>
+</form>
+
+<div id="message" class="message"></div>
+</div>
+
+<script>
+const API_URL = '/api/hera/candidate/apply';
+
+// ── Mapping département → infos complètes ──
+const DEPT_INFO = {
+  'Tech':       { label: 'Développement Tech',      emoji: '💻', skills: 'JavaScript, Node.js, React, Python' },
+  'Design':     { label: 'Design UX/UI',             emoji: '🎨', skills: 'Figma, Adobe XD, Prototypage' },
+  'Marketing':  { label: 'Marketing Digital',        emoji: '📣', skills: 'SEO, Google Ads, Social Media' },
+  'RH':         { label: 'Ressources Humaines',      emoji: '🤝', skills: 'Recrutement, SIRH, Droit du travail' },
+  'Finance':    { label: 'Finance & Comptabilité',   emoji: '📊', skills: 'Analyse financière, Excel, Reporting' },
+  'Support':    { label: 'Support Client',           emoji: '🎧', skills: 'CRM, Zendesk, Communication' },
+  'Management': { label: 'Direction & Management',   emoji: '🏆', skills: 'Leadership, Gestion de projet, OKR' },
+};
+
+const urlParams = new URLSearchParams(window.location.search);
+const deptFromUrl = urlParams.get('department');
+
+// ── Si département dans l'URL → personnaliser le formulaire ──
+if (deptFromUrl && DEPT_INFO[deptFromUrl]) {
+  const info = DEPT_INFO[deptFromUrl];
+
+  // Changer le titre
+  document.querySelector('h2').textContent = `Postuler — ${info.emoji} ${info.label}`;
+
+  // Ajouter un badge de poste sous le titre
+  const badge = document.createElement('div');
+  badge.style.cssText = 'text-align:center;margin-bottom:20px;';
+  badge.innerHTML = `<span style="background:rgba(204,255,0,0.08);color:#CCFF00;font-size:11px;padding:6px 12px;border-radius:8px;font-weight:700;border:1px solid rgba(204,255,0,0.2);">🛠 ${info.skills}</span>`;
+  document.querySelector('h2').after(badge);
+
+  // Pré-sélectionner et verrouiller le département
+  const select = document.getElementById('department');
+  for (let i = 0; i < select.options.length; i++) {
+    if (select.options[i].value === deptFromUrl) {
+      select.selectedIndex = i;
+      break;
+    }
+  }
+  select.style.pointerEvents = 'none';
+  select.style.opacity = '0.7';
+  select.style.borderColor = '#CCFF00';
+}
+
+const form = document.getElementById('applyForm');
+const submitBtn = document.getElementById('submitBtn');
+const messageDiv = document.getElementById('message');
+
+form.addEventListener('submit', async (e) => {
+e.preventDefault();
+submitBtn.disabled = true;
+submitBtn.textContent = 'Envoi en cours...';
+
+const formData = new FormData();
+formData.append('name', document.getElementById('name').value);
+formData.append('email', document.getElementById('email').value);
+formData.append('department', document.getElementById('department').value);
+formData.append('resume_text', document.getElementById('resume').value);
+
+// Ajout du fichier PDF
+const fileField = document.getElementById('cvFile');
+if (fileField.files[0]) {
+formData.append('resume_file', fileField.files[0]);
+}
+
+// Ajout job_offer_id depuis l'URL si présent
+const jobOfferId = urlParams.get('job_offer_id');
+if (jobOfferId) {
+formData.append('job_offer_id', jobOfferId);
+}
+
+try {
+const response = await fetch(API_URL, {
+method: 'POST',
+body: formData
+});
+
+const result = await response.json();
+if (result.success) {
+showMessage('success', `Candidature transmise avec succès ! Hera IA va analyser votre profil.`);
+form.reset();
+}
+} catch (error) {
+showMessage('error', 'Erreur de connexion. Veuillez réessayer.');
+} finally {
+submitBtn.disabled = false;
+submitBtn.textContent = 'Soumettre ma candidature';
+}
+});
+
+function showMessage(type, text) {
+messageDiv.className = `message ${type}`;
+messageDiv.textContent = text;
+messageDiv.style.display = 'block';
+}
+</script>
+</body>
+</html>

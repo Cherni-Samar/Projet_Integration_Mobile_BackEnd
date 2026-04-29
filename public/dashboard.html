@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>E-Team Management Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 40px;
+        }
+
+        .header h1 {
+            font-size: 36px;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            font-size: 18px;
+            opacity: 0.9;
+        }
+
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 40px;
+        }
+
+        .card {
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+            transition: transform 0.3s ease, box-shadow 0.3s ease;
+        }
+
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 20px 40px rgba(0,0,0,0.15);
+        }
+
+        .card-icon {
+            font-size: 48px;
+            margin-bottom: 20px;
+        }
+
+        .card-title {
+            font-size: 24px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .card-description {
+            color: #666;
+            margin-bottom: 20px;
+            line-height: 1.5;
+        }
+
+        .card-button {
+            display: inline-block;
+            background: #667eea;
+            color: white;
+            padding: 12px 24px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-weight: 600;
+            transition: background 0.3s ease;
+        }
+
+        .card-button:hover {
+            background: #5a6fd8;
+        }
+
+        .status-section {
+            background: white;
+            border-radius: 15px;
+            padding: 30px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        }
+
+        .status-title {
+            font-size: 24px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 20px;
+        }
+
+        .status-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+        }
+
+        .status-item {
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border-left: 4px solid #28a745;
+        }
+
+        .status-item.inactive {
+            border-left-color: #dc3545;
+        }
+
+        .status-label {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 5px;
+        }
+
+        .status-value {
+            color: #666;
+            font-size: 14px;
+        }
+
+        @media (max-width: 768px) {
+            .header h1 {
+                font-size: 28px;
+            }
+            
+            .dashboard-grid {
+                grid-template-columns: 1fr;
+            }
+            
+            .card {
+                padding: 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🏢 E-Team Management Dashboard</h1>
+            <p>Centralized control panel for all your AI agents and services</p>
+        </div>
+
+        <div class="dashboard-grid">
+            <div class="card">
+                <div class="card-icon">🔗</div>
+                <div class="card-title">Echo Configuration</div>
+                <div class="card-description">
+                    Configure product links for automated social media posts on LinkedIn and Mastodon
+                </div>
+                <a href="/echo-config" class="card-button">Configure Echo</a>
+            </div>
+
+            <div class="card">
+                <div class="card-icon">📋</div>
+                <div class="card-title">Job Applications</div>
+                <div class="card-description">
+                    Candidate application form for job seekers to submit their information
+                </div>
+                <a href="/form" class="card-button">View Form</a>
+            </div>
+
+            <div class="card">
+                <div class="card-icon">📊</div>
+                <div class="card-title">System Health</div>
+                <div class="card-description">
+                    Monitor the health and status of all your AI agents and services
+                </div>
+                <a href="/health" class="card-button">Check Health</a>
+            </div>
+
+            <div class="card">
+                <div class="card-icon">🤖</div>
+                <div class="card-title">Echo Stats</div>
+                <div class="card-description">
+                    View Echo agent statistics, tasks, and email processing metrics
+                </div>
+                <a href="/api/echo/stats" class="card-button">View Stats</a>
+            </div>
+
+            <div class="card">
+                <div class="card-icon">💼</div>
+                <div class="card-title">LinkedIn Integration</div>
+                <div class="card-description">
+                    Manage LinkedIn authentication and social media posting status
+                </div>
+                <a href="/api/echo/linkedin/status" class="card-button">Check Status</a>
+            </div>
+
+            <div class="card">
+                <div class="card-icon">🚀</div>
+                <div class="card-title">Force Post</div>
+                <div class="card-description">
+                    Manually trigger a social media post to test your configuration
+                </div>
+                <a href="#" onclick="forcePost()" class="card-button">Test Post</a>
+            </div>
+        </div>
+
+        <div class="status-section">
+            <div class="status-title">🔍 System Status</div>
+            <div class="status-grid" id="statusGrid">
+                <div class="status-item">
+                    <div class="status-label">Server</div>
+                    <div class="status-value" id="serverStatus">Loading...</div>
+                </div>
+                <div class="status-item">
+                    <div class="status-label">Database</div>
+                    <div class="status-value" id="dbStatus">Loading...</div>
+                </div>
+                <div class="status-item">
+                    <div class="status-label">LinkedIn</div>
+                    <div class="status-value" id="linkedinStatus">Loading...</div>
+                </div>
+                <div class="status-item">
+                    <div class="status-label">Echo Product Link</div>
+                    <div class="status-value" id="echoStatus">Loading...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Load system status
+        async function loadStatus() {
+            try {
+                // Check server health
+                const healthResponse = await fetch('/health');
+                const healthData = await healthResponse.json();
+                
+                document.getElementById('serverStatus').textContent = healthData.status === 'OK' ? '✅ Online' : '❌ Offline';
+                document.getElementById('dbStatus').textContent = healthData.db ? '✅ Connected' : '❌ Disconnected';
+                
+                // Check LinkedIn status
+                const linkedinResponse = await fetch('/api/echo/linkedin/status');
+                const linkedinData = await linkedinResponse.json();
+                document.getElementById('linkedinStatus').textContent = linkedinData.hasToken ? '✅ Authenticated' : '❌ Not Authenticated';
+                
+                // Check Echo product link status
+                const echoResponse = await fetch('/api/echo/config/product-link');
+                const echoData = await echoResponse.json();
+                if (echoData.success && echoData.data.isConfigured && echoData.data.isValid) {
+                    document.getElementById('echoStatus').textContent = '✅ Configured';
+                } else {
+                    document.getElementById('echoStatus').textContent = '❌ Not Configured';
+                }
+                
+            } catch (error) {
+                console.error('Error loading status:', error);
+            }
+        }
+
+        // Force post function
+        async function forcePost() {
+            if (!confirm('This will generate and publish a test post on LinkedIn and Mastodon. Continue?')) {
+                return;
+            }
+            
+            try {
+                const response = await fetch('/api/echo/social/force-post', {
+                    method: 'POST'
+                });
+                const data = await response.json();
+                
+                if (data.success) {
+                    alert('✅ Test post generated and published successfully! Check LinkedIn and Mastodon.');
+                } else {
+                    alert('❌ Failed to generate test post: ' + (data.error || 'Unknown error'));
+                }
+            } catch (error) {
+                alert('❌ Network error: ' + error.message);
+            }
+        }
+
+        // Load status on page load
+        loadStatus();
+        
+        // Refresh status every 30 seconds
+        setInterval(loadStatus, 30000);
+    </script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+{
+  "shareId": "7c7bc6aa-df19-46a4-b8db-60f994d3837f",
+  "documentId": "doc_test_1",
+  "createdBy": "user2",
+  "token": "8c09ea951196210c9d3227d55ed47d67dd5d0e624f6e65fe003725052f16ed42",
+  "expiresAt": "2026-03-31T05:40:25.539Z",
+  "maxDownloads": 5,
+  "currentDownloads": 0,
+  "requirePassword": true,
+  "password": "ecd71870d1963316a97e3ac3408c9835ad8cf0f3c1bc703527c30265534f75ae",
+  "allowedIPs": [],
+  "notifyOnAccess": true,
+  "createdAt": "2026-03-30T05:40:25.539Z",
+  "accessLog": []
+}
