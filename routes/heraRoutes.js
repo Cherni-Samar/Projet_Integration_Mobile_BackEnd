@@ -13,6 +13,7 @@ router.post('/leave-request',            hera.requestLeave);
 router.post('/onboarding',               hera.onboarding);
 router.post('/resignation',              hera.processResignation);
 router.post('/request-doc',              dexo.requestDocument);
+router.post('/candidate/apply',          upload.single('resume_file'), hera.processCandidacy);
 
 // --- ROUTES ADMIN ---
 router.post('/admin/check-staffing',     hera.checkStaffingNeeds);
