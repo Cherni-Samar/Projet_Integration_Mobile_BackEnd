@@ -130,6 +130,18 @@ async function generateAutonomousPost() {
 async function tick(force = false) {
   if (process.env.ECHO_SOCIAL_MEDIA_AUTONOMY_ENABLED !== 'true') return;
 
+  // ✅ ECHO AGENT OWNERSHIP CHECK - Critical Security
+  const { findUserWithAgentAndEnergy } = require('../utils/agentGuard');
+  const userCheck = await findUserWithAgentAndEnergy('echo');
+  
+  if (!userCheck.hasAgent || !userCheck.userId) {
+    console.log('⛔ ECHO blocked: No users have purchased ECHO agent or have energy - skipping autonomous post');
+    return;
+  }
+  
+  const userId = userCheck.userId;
+  console.log(`✅ [ECHO] Agent ownership verified for autonomous posting: ${userId}`);
+
   const state = loadState();
   const last = state.lastAutonomousPostAt ? new Date(state.lastAutonomousPostAt).getTime() : 0;
   
@@ -162,29 +174,20 @@ async function tick(force = false) {
   const User = require('../models/User');
   let totalEnergyCost = 0;
   
-  // Find user with most energy for autonomous energy deduction
-  let userId = null;
-  try {
-    const userWithEnergy = await User.findOne({ energyBalance: { $gt: 0 } }).sort({ energyBalance: -1 });
-    if (userWithEnergy) {
-      userId = userWithEnergy._id.toString();
-      console.log(`⚡ [AUTONOMOUS] Using user portfolio for energy: ${userId} (${userWithEnergy.energyBalance} energy)`);
-    }
-  } catch (err) {
-    console.warn('⚠️ [AUTONOMOUS] Could not find user for energy deduction:', err.message);
-  }
-  
   const contentEnergyResult = await manualEnergyConsumption(
     'echo',
     'CONTENT_GENERATION',
     'Autonomous social media post generation',
     { forced: force, contentLength: postText.length, hasProductLink },
-    userId // Pass userId for user portfolio deduction
+    userId // Use verified user ID
   );
   
   if (contentEnergyResult.success) {
     totalEnergyCost += contentEnergyResult.energyCost;
     console.log(`⚡ [ENERGY] Echo consumed ${contentEnergyResult.energyCost} energy for CONTENT_GENERATION`);
+  } else if (contentEnergyResult.blocked) {
+    console.log('⛔ ECHO blocked: Autonomous content generation blocked - user hasn\'t purchased ECHO');
+    return;
   } else {
     console.warn(`⚠️ [ENERGY] ${contentEnergyResult.error} - Continuing with post generation`);
   }
@@ -205,12 +208,15 @@ async function tick(force = false) {
       'IMAGE_GENERATION',
       'AI image generation for social post',
       { keywords, fileName: imageFileName },
-      userId // Pass userId for user portfolio deduction
+      userId // Use verified user ID
     );
     
     if (imageEnergyResult.success) {
       totalEnergyCost += imageEnergyResult.energyCost;
       console.log(`⚡ [ENERGY] Echo consumed ${imageEnergyResult.energyCost} energy for IMAGE_GENERATION`);
+    } else if (imageEnergyResult.blocked) {
+      console.log('⛔ ECHO blocked: Autonomous image generation blocked - user hasn\'t purchased ECHO');
+      return;
     }
   } catch (imgErr) {
     console.warn('⚠️ Échec image generation, post sans image.');
@@ -242,12 +248,15 @@ async function tick(force = false) {
       platforms: Object.keys(results),
       successCount: Object.values(results).filter(r => r.success).length
     },
-    userId // Pass userId for user portfolio deduction
+    userId // Use verified user ID
   );
   
   if (publishEnergyResult.success) {
     totalEnergyCost += publishEnergyResult.energyCost;
     console.log(`⚡ [ENERGY] Echo consumed ${publishEnergyResult.energyCost} energy for SOCIAL_POST`);
+  } else if (publishEnergyResult.blocked) {
+    console.log('⛔ ECHO blocked: Autonomous publishing blocked - user hasn\'t purchased ECHO');
+    return;
   }
 
   // 5. Log post to database for mobile app

@@ -18,6 +18,17 @@ class ProductCampaignScheduler {
     try {
       console.log('🔍 [CAMPAIGN] Checking for campaigns ready to post...');
       
+      // ✅ ECHO AGENT OWNERSHIP CHECK - Critical Security
+      const { findUserWithAgentAndEnergy } = require('../utils/agentGuard');
+      const userCheck = await findUserWithAgentAndEnergy('echo');
+      
+      if (!userCheck.hasAgent || !userCheck.userId) {
+        console.log('⛔ ECHO blocked: No users have purchased ECHO agent or have energy - skipping campaign');
+        return;
+      }
+      
+      console.log(`✅ [CAMPAIGN] Echo agent ownership verified for user: ${userCheck.userId}`);
+      
       // Find active campaigns that are ready to post
       const readyToPost = await ProductCampaign.getReadyToPost();
       
@@ -28,9 +39,9 @@ class ProductCampaignScheduler {
       
       console.log(`📢 [CAMPAIGN] Found ${readyToPost.length} campaign(s) ready to post`);
       
-      // Process each campaign
+      // Process each campaign with the verified user
       for (const campaign of readyToPost) {
-        await this.postCampaign(campaign);
+        await this.postCampaign(campaign, userCheck.userId);
       }
       
     } catch (error) {
@@ -41,11 +52,27 @@ class ProductCampaignScheduler {
   /**
    * Post a single campaign to configured platforms
    */
-  static async postCampaign(campaign) {
+  static async postCampaign(campaign, verifiedUserId = null) {
     try {
       console.log(`🚀 [CAMPAIGN] Posting campaign: ${campaign.productData.title}`);
       console.log(`📋 [CAMPAIGN] Platforms configured: ${campaign.platforms.join(', ')}`);
       console.log(`🔗 [CAMPAIGN] Product URL: ${campaign.productUrl}`);
+      
+      // Use verified user ID or find user with Echo agent and energy
+      let userId = verifiedUserId;
+      if (!userId) {
+        const { findUserWithAgentAndEnergy } = require('../utils/agentGuard');
+        const userCheck = await findUserWithAgentAndEnergy('echo');
+        
+        if (!userCheck.hasAgent || !userCheck.userId) {
+          console.log('⛔ ECHO blocked: User hasn\'t purchased ECHO - skipping campaign');
+          return;
+        }
+        
+        userId = userCheck.userId;
+      }
+      
+      console.log(`⚡ [CAMPAIGN] Using user portfolio for energy: ${userId}`);
       
       // Check LinkedIn authentication status
       const linkedinService = require('./linkedin.service');
@@ -53,18 +80,6 @@ class ProductCampaignScheduler {
       console.log(`🔐 [CAMPAIGN] LinkedIn auth status: ${sessionInfo.hasAccessToken ? '✅ Authenticated' : '❌ Not authenticated'}`);
       if (!sessionInfo.hasAccessToken && campaign.platforms.includes('linkedin')) {
         console.warn('⚠️  [CAMPAIGN] LinkedIn is in platforms but not authenticated! Will only post to other platforms.');
-      }
-      
-      // Find user with most energy for autonomous energy deduction
-      let userId = null;
-      try {
-        const userWithEnergy = await User.findOne({ energyBalance: { $gt: 0 } }).sort({ energyBalance: -1 });
-        if (userWithEnergy) {
-          userId = userWithEnergy._id.toString();
-          console.log(`⚡ [CAMPAIGN] Using user portfolio for energy: ${userId} (${userWithEnergy.energyBalance} energy)`);
-        }
-      } catch (err) {
-        console.warn('⚠️ [CAMPAIGN] Could not find user for energy deduction:', err.message);
       }
       
       let totalEnergyCost = 0;
@@ -87,6 +102,9 @@ class ProductCampaignScheduler {
       if (contentEnergyResult.success) {
         totalEnergyCost += contentEnergyResult.energyCost;
         console.log(`⚡ [ENERGY] Echo consumed ${contentEnergyResult.energyCost} energy for CONTENT_GENERATION`);
+      } else if (contentEnergyResult.blocked) {
+        console.log('⛔ ECHO blocked: Campaign content generation blocked - user hasn\'t purchased ECHO');
+        return;
       }
       
       // ⚡ CONSUME ENERGY FOR IMAGE_GENERATION (if image was generated)
@@ -102,6 +120,9 @@ class ProductCampaignScheduler {
         if (imageEnergyResult.success) {
           totalEnergyCost += imageEnergyResult.energyCost;
           console.log(`⚡ [ENERGY] Echo consumed ${imageEnergyResult.energyCost} energy for IMAGE_GENERATION`);
+        } else if (imageEnergyResult.blocked) {
+          console.log('⛔ ECHO blocked: Campaign image generation blocked - user hasn\'t purchased ECHO');
+          return;
         }
       }
       
@@ -203,6 +224,9 @@ class ProductCampaignScheduler {
       if (publishEnergyResult.success) {
         totalEnergyCost += publishEnergyResult.energyCost;
         console.log(`⚡ [ENERGY] Echo consumed ${publishEnergyResult.energyCost} energy for SOCIAL_POST`);
+      } else if (publishEnergyResult.blocked) {
+        console.log('⛔ ECHO blocked: Campaign publishing blocked - user hasn\'t purchased ECHO');
+        return;
       }
       
       // Log post to database

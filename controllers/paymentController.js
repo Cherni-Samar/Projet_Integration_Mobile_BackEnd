@@ -12,7 +12,7 @@ const PAYMENTS_PACKS = {
 
 exports.createPaymentIntent = async (req, res, next) => {
     try {
-        const { packId } = req.body; // L'app envoie l'ID du pack, pas le prix !
+        const { packId, suggestedAgents } = req.body; // Accept suggested agents from frontend
 
         // 1. Validation du pack
         const selectedPack = PAYMENTS_PACKS[packId];
@@ -23,25 +23,39 @@ exports.createPaymentIntent = async (req, res, next) => {
             });
         }
 
-        // 2. Création du PaymentIntent avec Métadonnées
+        // 2. Validation des agents suggérés
+        let validatedAgents = [];
+        if (Array.isArray(suggestedAgents)) {
+            const validAgentIds = ['hera', 'echo', 'timo', 'dexo', 'kash'];
+            // Remove duplicates and filter only valid agent IDs
+            validatedAgents = [...new Set(suggestedAgents.filter(agent => 
+                typeof agent === 'string' && validAgentIds.includes(agent.toLowerCase())
+            ))].map(agent => agent.toLowerCase());
+        }
+
+        console.log(`💡 Suggested agents validated: ${JSON.stringify(validatedAgents)}`);
+
+        // 3. Création du PaymentIntent avec Métadonnées
         const paymentIntent = await stripe.paymentIntents.create({
             amount: selectedPack.amount, // Le serveur impose le prix
             currency: 'eur',
             automatic_payment_methods: { enabled: true },
             metadata: {
-userId: req.user.id || req.user.userId || req.user._id,
+                userId: req.user.id || req.user.userId || req.user._id,
                 packId: packId,
-                creditsToAdd: selectedPack.credits.toString() 
+                creditsToAdd: selectedPack.credits.toString(),
+                suggestedAgents: JSON.stringify(validatedAgents) // Store suggested agents
             },
         });
 
-        console.log(`💳 PaymentIntent sécurisé créé: ${paymentIntent.id} pour ${selectedPack.name}`);
+        console.log(`💳 PaymentIntent sécurisé créé: ${paymentIntent.id} pour ${selectedPack.name} avec agents: ${JSON.stringify(validatedAgents)}`);
 
         res.status(200).json({
             success: true,
             clientSecret: paymentIntent.client_secret,
             paymentIntentId: paymentIntent.id,
-            details: selectedPack // On renvoie les détails pour l'affichage Flutter
+            details: selectedPack, // On renvoie les détails pour l'affichage Flutter
+            suggestedAgents: validatedAgents // Return validated agents for frontend confirmation
         });
     } catch (error) {
         console.error('❌ Stripe error:', error.message);
@@ -96,6 +110,8 @@ if (authUserId && authUserId.toString() !== userId.toString()) {
                     success: true,
                     message: 'Paiement déjà traité',
                     newBalance: alreadyProcessedUser.credits,
+                    activeAgents: alreadyProcessedUser.activeAgents,
+                    warning: null,
                     data: {
                         user: {
                             id: alreadyProcessedUser._id,
@@ -112,6 +128,44 @@ if (authUserId && authUserId.toString() !== userId.toString()) {
                 });
             }
 
+            // Load user from database first
+            const user = await User.findById(userId);
+            if (!user) {
+                return res.status(404).json({
+                    success: false,
+                    message: "User not found"
+                });
+            }
+
+            console.log("💳 Confirm payment for user:", userId);
+
+            // Parse suggested agents from metadata
+            const suggestedAgents = JSON.parse(paymentIntent.metadata.suggestedAgents || '[]');
+            console.log(`🤖 Suggested agents from metadata: ${JSON.stringify(suggestedAgents)}`);
+
+            // Get current user active agents
+            const currentActiveAgents = user.activeAgents || [];
+            console.log(`👤 Current active agents: ${JSON.stringify(currentActiveAgents)}`);
+
+            // Determine plan limits
+            let maxAgentsForPlan = 1; // default free
+            if (packId === 'basic_plan') {
+                maxAgentsForPlan = 3;
+            } else if (packId === 'premium_plan') {
+                maxAgentsForPlan = 5;
+            }
+
+            // Merge agents safely (avoid duplicates)
+            const mergedAgents = [...new Set([...currentActiveAgents, ...suggestedAgents])];
+            console.log(`🔄 Merged agents: ${JSON.stringify(mergedAgents)}`);
+
+            // Enforce plan limit
+            const allowedAgents = mergedAgents.slice(0, maxAgentsForPlan);
+            const droppedAgents = mergedAgents.slice(maxAgentsForPlan);
+            
+            console.log(`✅ Allowed agents: ${JSON.stringify(allowedAgents)}`);
+            console.log(`⚠️ Dropped agents: ${JSON.stringify(droppedAgents)}`);
+
             const update = {
                 $inc: {
                     credits: creditsToAdd,
@@ -120,20 +174,19 @@ if (authUserId && authUserId.toString() !== userId.toString()) {
                 $addToSet: {
                     processedPaymentIntents: paymentIntentId,
                 },
+                $set: {
+                    activeAgents: allowedAgents // Set the allowed agents
+                }
             };
 
             // If it's a subscription plan (not a topup), update plan and agent limit.
             if (!selectedPack.type) {
                 if (packId === 'basic_plan') {
-                    update.$set = {
-                        subscriptionPlan: 'basic',
-                        maxAgentsAllowed: selectedPack.agentsAllowed ?? 3,
-                    };
+                    update.$set.subscriptionPlan = 'basic';
+                    update.$set.maxAgentsAllowed = selectedPack.agentsAllowed ?? 3;
                 } else if (packId === 'premium_plan') {
-                    update.$set = {
-                        subscriptionPlan: 'premium',
-                        maxAgentsAllowed: selectedPack.agentsAllowed ?? 5,
-                    };
+                    update.$set.subscriptionPlan = 'premium';
+                    update.$set.maxAgentsAllowed = selectedPack.agentsAllowed ?? 5;
                 }
             }
 
@@ -151,6 +204,8 @@ if (authUserId && authUserId.toString() !== userId.toString()) {
                     success: true,
                     message: 'Paiement déjà traité',
                     newBalance: freshUser?.credits,
+                    activeAgents: freshUser?.activeAgents || [],
+                    warning: null,
                     data: {
                         user: freshUser
                             ? {
@@ -169,28 +224,48 @@ if (authUserId && authUserId.toString() !== userId.toString()) {
                 });
             }
 
+            // Prepare response data
+            const responseData = {
+                user: {
+                    id: updatedUser._id,
+                    email: updatedUser.email,
+                    name: updatedUser.name,
+                    isEmailVerified: updatedUser.isEmailVerified,
+                    subscriptionPlan: updatedUser.subscriptionPlan,
+                    maxAgentsAllowed: updatedUser.maxAgentsAllowed,
+                    activeAgents: updatedUser.activeAgents,
+                    energyBalance: updatedUser.energyBalance,
+                    credits: updatedUser.credits,
+                },
+            };
+
+            // Add warning if some agents were dropped due to plan limits
+            let warning = null;
+            if (droppedAgents.length > 0) {
+                warning = `Plan limit reached. ${droppedAgents.length} suggested agent(s) were not activated: ${droppedAgents.join(', ')}`;
+            }
+
+            console.log(`🎉 Payment confirmed successfully. Active agents: ${JSON.stringify(allowedAgents)}`);
+            if (warning) {
+                console.log(`⚠️ Warning: ${warning}`);
+            }
+
             return res.status(200).json({
                 success: true,
                 message: "Paiement confirmé avec succès !",
                 newBalance: updatedUser.credits,
-                data: {
-                    user: {
-                        id: updatedUser._id,
-                        email: updatedUser.email,
-                        name: updatedUser.name,
-                        isEmailVerified: updatedUser.isEmailVerified,
-                        subscriptionPlan: updatedUser.subscriptionPlan,
-                        maxAgentsAllowed: updatedUser.maxAgentsAllowed,
-                        activeAgents: updatedUser.activeAgents,
-                        energyBalance: updatedUser.energyBalance,
-                        credits: updatedUser.credits,
-                    },
-                },
+                activeAgents: allowedAgents,
+                warning: warning,
+                data: responseData,
             });
         }
 
         res.status(400).json({ success: false, message: "Paiement non validé" });
     } catch (error) {
-        res.status(500).json({ success: false, message: error.message });
+        console.error("❌ confirmPayment error:", error);
+        res.status(500).json({ 
+            success: false, 
+            message: error.message 
+        });
     }
 };

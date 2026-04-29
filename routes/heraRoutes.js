@@ -6,17 +6,18 @@ const dexo    = require('../controllers/dexoController');
 const timo    = require('../controllers/timoController');
 const vocalAuto = require('../services/automatedBriefing');
 const authMiddleware = require('../middleware/authMiddleware');
+const { requireAgentAccess } = require('../middleware/agentGuard');
 const upload = multer({ dest: 'uploads/cv/' });
 const { triggerStaffingForUser } = require('../services/staffingEventService');
 // --- ROUTES EMPLOYÉ ---
-router.post('/leave-request',            hera.requestLeave);
-router.post('/onboarding', authMiddleware, hera.onboarding);
-router.post('/resignation', authMiddleware, hera.processResignation);
+router.post('/leave-request',            authMiddleware, requireAgentAccess('hera'), hera.requestLeave);
+router.post('/onboarding',                authMiddleware, requireAgentAccess('hera'), hera.onboarding);
+router.post('/resignation',               authMiddleware, requireAgentAccess('hera'), hera.processResignation);
 router.post('/request-doc', dexo.requestDocument);
 // --- ROUTES ADMIN ---
 // --- ROUTES ADMIN (PROTÉGÉES) ---
-router.post('/admin/check-staffing', authMiddleware, hera.checkStaffingNeeds);
-router.post('/admin/hire/:id', authMiddleware, hera.hireCandidate);
+router.post('/admin/check-staffing',     authMiddleware, requireAgentAccess('hera'), hera.checkStaffingNeeds);
+router.post('/admin/hire/:id',            authMiddleware, requireAgentAccess('hera'), hera.hireCandidate);
 
 router.get('/admin/stats', authMiddleware, hera.getAdminStats);
 router.get('/admin/employees', authMiddleware, hera.getAllEmployees);
@@ -34,7 +35,7 @@ router.get('/admin/agent-interactions', authMiddleware, hera.getAgentInteraction
 router.get('/admin/agent-interactions/stats', authMiddleware, hera.getAgentInteractionStats);
 
 // --- AGENTS ---
-router.post('/chat',                     hera.chat);
+router.post('/chat',                     authMiddleware, requireAgentAccess('hera'), hera.chat);
 router.post('/vapi-webhook',             hera.vapiWebhook);
 router.get ('/admin/timo-tasks',         timo.getTimoTasks);
 router.get ('/admin/timo-inbox',         timo.getTimoInbox);
@@ -67,7 +68,7 @@ router.get('/admin/trigger-vocal', async (req, res) => {
 
 
 //testtt 
-router.post('/test/staffing/:userId', authMiddleware, async (req, res) => {
+router.post('/test/staffing/:userId',     authMiddleware, requireAgentAccess('hera'), async (req, res) => {
   try {
     await triggerStaffingForUser(req.params.userId);
 

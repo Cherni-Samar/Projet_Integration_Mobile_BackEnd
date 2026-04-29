@@ -14,7 +14,10 @@ const authMiddleware = require('../middleware/authMiddleware');
 // ─────────────────────────────────────────────
 router.post('/hire', authMiddleware, agentController.hireAgent); 
 
-// Get all agents with energy status
+// Get user's active agents (My Agents page)
+router.get('/my-agents', authMiddleware, agentController.getMyAgents);
+
+// Get all agents with energy status (marketplace/browse)
 router.get('/', agentController.getAllAgents);
 
 // Get single agent

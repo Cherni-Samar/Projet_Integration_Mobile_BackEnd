@@ -22,6 +22,14 @@ const hireAgent = async (req, res) => {
       return res.status(400).json({ success: false, message: "Cet agent est déjà actif" });
     }
 
+    // Vérifier la limite d'agents
+    if (user.activeAgents.length >= user.maxAgentsAllowed) {
+      return res.status(400).json({ 
+        success: false, 
+        message: `Limite d'agents atteinte (${user.maxAgentsAllowed}). Mettez à niveau votre plan pour ajouter plus d'agents.` 
+      });
+    }
+
     // Ajouter l'agent à la liste
     user.activeAgents.push(agentId.toLowerCase());
     
@@ -40,6 +48,66 @@ const hireAgent = async (req, res) => {
   } catch (error) {
     console.error('❌ Error hireAgent:', error);
     res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+// ─────────────────────────────────────────────
+// GET USER'S ACTIVE AGENTS (MY AGENTS PAGE)
+// GET /api/agents/my-agents
+// ─────────────────────────────────────────────
+const getMyAgents = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const user = await User.findById(userId);
+    
+    if (!user) {
+      return res.status(404).json({ 
+        success: false, 
+        message: "Utilisateur non trouvé" 
+      });
+    }
+
+    // Get only user's active agents
+    const agents = await Agent.find({ 
+      name: { $in: user.activeAgents },
+      status: 'active' 
+    }).sort({ name: 1 });
+    
+    console.log(`👤 [MY AGENTS] User ${user.email} has ${user.activeAgents.length} active agents: ${JSON.stringify(user.activeAgents)}`);
+    
+    res.json({
+      success: true,
+      data: {
+        activeAgents: user.activeAgents,
+        maxAgentsAllowed: user.maxAgentsAllowed,
+        subscriptionPlan: user.subscriptionPlan,
+        agents: agents.map(agent => ({
+          id: agent._id,
+          name: agent.name,
+          displayName: agent.displayName,
+          description: agent.description,
+          avatar: agent.avatar,
+          energy: agent.energy,
+          maxEnergy: agent.maxEnergy,
+          energyPercentage: agent.getEnergyPercentage(),
+          status: agent.status,
+          readyStatus: agent.readyStatus,
+          specialties: agent.specialties,
+          isReady: agent.isReady(),
+          stats: agent.stats,
+          lastActivity: agent.lastActivity
+        })),
+        agentCount: agents.length
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('❌ Error getMyAgents:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Internal server error',
+      details: error.message 
+    });
   }
 };
 const getAllAgents = async (req, res) => {
@@ -715,5 +783,6 @@ module.exports = {
   getEnergyBalance,
   powerAgents,
   initializeAgents,
-  hireAgent
+  hireAgent,
+  getMyAgents
 };

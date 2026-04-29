@@ -62,6 +62,25 @@ class EnergyConsumptionService {
       console.log(`⚡ [ENERGY] Consuming energy for ${agentName} - ${taskType}`);
       console.log(`⚡ [ENERGY] userId provided: ${userId ? userId : 'NO USER ID'}`);
       
+      // ✅ AGENT OWNERSHIP VALIDATION - Critical Security Check
+      if (userId) {
+        const { canUseAgent } = require('../utils/agentGuard');
+        const guard = await canUseAgent(userId, agentName);
+        
+        if (!guard.canUse) {
+          console.log(`⛔ ${agentName.toUpperCase()} blocked: User ${userId} hasn't purchased ${agentName.toUpperCase()} - ${guard.error}`);
+          return {
+            success: false,
+            error: `Access denied: ${guard.error}`,
+            blocked: true,
+            agentName: agentName.toUpperCase(),
+            userId: userId
+          };
+        }
+        
+        console.log(`✅ [ENERGY] Agent ownership verified: User ${userId} owns ${agentName.toUpperCase()}`);
+      }
+      
       // Find the agent
       const agent = await Agent.findOne({ name: agentName.toLowerCase() });
       if (!agent) {

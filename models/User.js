@@ -38,6 +38,12 @@ const userSchema = new mongoose.Schema(
       default: ""
     },
 
+    // ✅ Vérifier si l'utilisateur a complété l'onboarding DEXO
+    onboardingCompleted: {
+      type: Boolean,
+      default: false
+    },
+
     // ✅ NOUVEAU : Réglages des effectifs cibles (Vision du CEO)
     // C'est ici que Dexo enregistre les chiffres du chat
     workforceSettings: [

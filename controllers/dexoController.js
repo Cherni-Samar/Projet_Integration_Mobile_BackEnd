@@ -115,6 +115,7 @@ exports.saveVision = async (req, res) => {
       {
         companyVision: vision,
         workforceSettings,
+        onboardingCompleted: true, // ✅ Set flag to true
       },
       { new: true }
     );
@@ -126,9 +127,14 @@ if (!user) {
   });
 }
 
-triggerStaffingForUser(user._id).catch((err) => {
-  console.warn('⚠️ Staffing trigger après saveVision:', err.message);
-});
+// ✅ HERA ACCESS CONTROL: Only trigger staffing if user has purchased HERA
+if (user.activeAgents?.includes('hera')) {
+  triggerStaffingForUser(user._id).catch((err) => {
+    console.warn('⚠️ Staffing trigger après saveVision:', err.message);
+  });
+} else {
+  console.log(`⛔ HERA blocked: User ${user._id} hasn't purchased HERA - skipping staffing trigger`);
+}
 
 res.json({
   success: true,

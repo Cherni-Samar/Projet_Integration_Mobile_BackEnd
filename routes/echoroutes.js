@@ -3,11 +3,12 @@ const router = express.Router();
 const echoController = require('../controllers/echoController');
 const imageProxyController = require('../controllers/imageProxyController');
 const authMiddleware = require('../middleware/authMiddleware');
+const { agentGuardMiddleware } = require('../utils/agentGuard');
 
 // Image proxy route
 router.get('/image-proxy', imageProxyController.proxyImage);
 
-// Routes existantes
+// Routes existantes (basic analysis - no guard needed for basic functionality)
 router.post('/analyser', echoController.analyser);
 router.post('/full-analysis', echoController.fullAnalysis);
 router.post('/auto-reply', echoController.autoReply);
@@ -81,8 +82,8 @@ router.get('/linkedin/callback', async (req, res) => {
     }
 });
 
-// Publier manuellement sur LinkedIn
-router.post('/linkedin/post', async (req, res) => {
+// Publier manuellement sur LinkedIn (PROTECTED - requires Echo agent)
+router.post('/linkedin/post', authMiddleware, agentGuardMiddleware('echo'), async (req, res) => {
     const { content } = req.body;
 
     if (!content) {
@@ -98,8 +99,8 @@ router.post('/linkedin/post', async (req, res) => {
     }
 });
 
-// Publier un post de recrutement
-router.post('/linkedin/recruitment', async (req, res) => {
+// Publier un post de recrutement (PROTECTED - requires Echo agent)
+router.post('/linkedin/recruitment', authMiddleware, agentGuardMiddleware('echo'), async (req, res) => {
     const { jobTitle, jobDescription, location, contractType } = req.body;
 
     try {
@@ -146,8 +147,8 @@ router.get('/linkedin/status', async (req, res) => {
     }
 });
 
-// Forcer une publication automatique immédiate (AVEC IMAGE)
-router.post('/social/force-post', async (req, res) => {
+// Forcer une publication automatique immédiate (PROTECTED - requires Echo agent)
+router.post('/social/force-post', authMiddleware, agentGuardMiddleware('echo'), async (req, res) => {
     try {
         const { tick } = require('../services/echoLinkedInAutonomy');
         // On passe 'true' pour forcer la publication même si les 3 jours ne sont pas passés
@@ -181,7 +182,7 @@ router.put('/mobile/product-link', echoController.updateMobileProductLink);
 
 // Mobile posts and logs
 router.get('/mobile/posts', echoController.getMobilePosts);
-router.post('/mobile/force-post', authMiddleware, echoController.mobileForcePost);
+router.post('/mobile/force-post', authMiddleware, agentGuardMiddleware('echo'), echoController.mobileForcePost);
 
 // Mobile dashboard
 router.get('/mobile/dashboard', echoController.getMobileDashboard);
@@ -190,24 +191,24 @@ router.get('/mobile/dashboard', echoController.getMobileDashboard);
 router.get('/mobile/posts-metrics', echoController.getPostsMetrics);
 
 // ============================================================
-// PRODUCT MARKETING AUTOMATION ROUTES
+// PRODUCT MARKETING AUTOMATION ROUTES (PROTECTED - requires Echo agent)
 // ============================================================
 
-// Scrape product information
-router.post('/product/scrape', echoController.scrapeProduct);
+// Scrape product information (PROTECTED)
+router.post('/product/scrape', authMiddleware, agentGuardMiddleware('echo'), echoController.scrapeProduct);
 
-// Generate marketing post
-router.post('/product/generate-post', authMiddleware, echoController.generateProductPost);
+// Generate marketing post (PROTECTED)
+router.post('/product/generate-post', authMiddleware, agentGuardMiddleware('echo'), echoController.generateProductPost);
 
-// Campaign management
-router.post('/product/campaign/start', echoController.startProductCampaign);
+// Campaign management (PROTECTED)
+router.post('/product/campaign/start', authMiddleware, agentGuardMiddleware('echo'), echoController.startProductCampaign);
 router.get('/product/campaign/status', echoController.getCampaignStatus);
 router.get('/product/campaign/history', echoController.getCampaignHistory);
-router.post('/product/campaign/stop', echoController.stopProductCampaign);
-router.post('/product/campaign/toggle', echoController.toggleProductCampaign);
+router.post('/product/campaign/stop', authMiddleware, agentGuardMiddleware('echo'), echoController.stopProductCampaign);
+router.post('/product/campaign/toggle', authMiddleware, agentGuardMiddleware('echo'), echoController.toggleProductCampaign);
 
-// Manual campaign trigger (for testing)
-router.post('/product/campaign/trigger-now', async (req, res) => {
+// Manual campaign trigger (PROTECTED - for testing)
+router.post('/product/campaign/trigger-now', authMiddleware, agentGuardMiddleware('echo'), async (req, res) => {
   try {
     const ProductCampaignScheduler = require('../services/productCampaignScheduler.service');
     await ProductCampaignScheduler.triggerNow();

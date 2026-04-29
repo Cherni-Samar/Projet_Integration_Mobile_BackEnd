@@ -8,8 +8,24 @@ const ActivityLog = require('../models/ActivityLog');
 const triggerStaffingForUser = async (userId) => {
   console.log(`🧠 [HERA EVENT] Analyse staffing globale pour user ${userId}`);
 
-  const user = await User.findById(userId);
-  if (!user || !user.workforceSettings?.length) return;
+  // ✅ HERA ACCESS CONTROL: Verify user has purchased HERA
+  const user = await User.findById(userId).select('activeAgents workforceSettings');
+  
+  if (!user) {
+    console.log(`⛔ User ${userId} not found`);
+    return;
+  }
+
+  // ✅ CHECK: Does user have HERA in activeAgents?
+  if (!user.activeAgents?.includes('hera')) {
+    console.log(`⛔ HERA blocked: User ${userId} has not purchased HERA`);
+    return;
+  }
+
+  if (!user.workforceSettings?.length) {
+    console.log('✅ No workforce settings configured');
+    return;
+  }
 
   const needs = [];
 

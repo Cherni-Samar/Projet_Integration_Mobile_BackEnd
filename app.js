@@ -28,7 +28,6 @@ const paymentRoutes = require('./routes/paymentRoutes');
 const kashRoutes = require('./routes/kashRoutes');
 const activityRoutes = require('./routes/activityRoutes');
 const dexoRoutes = require('./routes/dexoRoutes');
-const predictionRoutes = require('./routes/predictionRoutes');
 
 const errorHandler = require('./middleware/errorHandler');
 const { startEchoSocialMediaAutonomy } = require('./services/echoLinkedInAutonomy');
@@ -89,7 +88,6 @@ app.use('/api/echo', echoRoutes);
 app.use('/api/kash', kashRoutes);
 app.use('/api/activities', activityRoutes);      
 app.use('/api/dexo', dexoRoutes);
-app.use('/api/predictions', predictionRoutes);  
 
 
 // ✅ KASH TEST ROUTES
