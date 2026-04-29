@@ -4,7 +4,7 @@ const Groq = require('groq-sdk');
 const User = require('../models/User');
 const Reminder = require('../models/Reminder');
 const Expense = require('../models/Expense');
-const dexoService = require('../services/dexoService');
+
 // ============================================================================
 // INITIALIZATION
 // ============================================================================
@@ -108,9 +108,7 @@ Return ONLY the HTML email body, no explanation, no markdown, no backticks.`;
           subject: `[Kash] Your Daily Financial Briefing — ${todayStr}`,
           html: emailHtml
         });
-await dexoService.sendReport('daily', emailHtml, {
-  userEmail: user.email
-});
+
         console.log(`[Kash Cron] Daily email sent to: ${user.email}`);
       } catch (error) {
         console.error(`[Kash Cron] Error processing user ${user._id}: ${error.message}`);
@@ -475,15 +473,7 @@ Return ONLY a valid JSON object with this exact structure, no explanation, no ma
           subject: `[Kash Weekly Report] Financial Summary — Week of ${startDateStr}`,
           html: emailHtml
         });
-await dexoService.sendReport('weekly', emailHtml, {
-  userEmail: user.email,
-  startDate: startDateStr,
-  endDate: endDateStr,
-  totalSpent: groqData.totalSpent || totalExpenses,
-  budgetsAtRisk: groqData.budgetsAtRisk || budgetsAtRisk,
-  overduePayments: groqData.overduePayments || overduePayments,
-  aiSummary: groqData.aiSummary
-});
+
         console.log(`[Kash Cron] Weekly email sent to: ${user.email}`);
       } catch (error) {
         console.error(`[Kash Cron] Error processing user ${user._id}: ${error.message}`);

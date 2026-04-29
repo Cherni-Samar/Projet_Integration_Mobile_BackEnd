@@ -12,7 +12,6 @@ const authMiddleware = require('../middleware/authMiddleware');
 // ─────────────────────────────────────────────
 // AGENT MANAGEMENT ROUTES
 // ─────────────────────────────────────────────
-router.post('/hire', authMiddleware, agentController.hireAgent); 
 
 // Get all agents with energy status
 router.get('/', agentController.getAllAgents);

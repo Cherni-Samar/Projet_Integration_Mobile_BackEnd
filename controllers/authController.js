@@ -265,7 +265,7 @@ exports.login = async (req, res, next) => {
 // 5️⃣ GET ME
 exports.getMe = async (req, res) => {
   try {
-    const user = await User.findById(req.user.id).select('-password');
+    const user = await User.findById(req.user.id);
 
     if (!user) {
       return res.status(404).json({
@@ -283,17 +283,10 @@ exports.getMe = async (req, res) => {
           name: user.name,
           isEmailVerified: user.isEmailVerified,
           subscriptionPlan: user.subscriptionPlan,
-          subscriptionStatus: user.subscriptionStatus,
           maxAgentsAllowed: user.maxAgentsAllowed,
           activeAgents: user.activeAgents,
           energyBalance: user.energyBalance,
-          credits: user.credits,
-
-          companyVision: user.companyVision,
-          workforceSettings: user.workforceSettings || [],
-
           createdAt: user.createdAt,
-          updatedAt: user.updatedAt,
           lastLoginAt: user.lastLoginAt
         }
       }
@@ -305,6 +298,7 @@ exports.getMe = async (req, res) => {
     });
   }
 };
+
 // 6️⃣ LOGOUT
 exports.logout = async (req, res) => {
   try {

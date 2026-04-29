@@ -32,21 +32,7 @@ const userSchema = new mongoose.Schema(
       enum: ['Marketing', 'Retail', 'Tech', 'Healthcare', 'Consulting', null],
       default: null
     },
-   // ✅ NOUVEAU : Vision stratégique de l'entreprise (Onboarding)
-    companyVision: {
-      type: String,
-      default: ""
-    },
 
-    // ✅ NOUVEAU : Réglages des effectifs cibles (Vision du CEO)
-    // C'est ici que Dexo enregistre les chiffres du chat
-    workforceSettings: [
-      {
-        department: { type: String, required: true }, // 'Tech', 'Design', 'Marketing', etc.
-        targetCount: { type: Number, default: 0 },    // L'objectif du patron
-        currentCount: { type: Number, default: 0 }    // L'état réel (calculé par Hera)
-      }
-    ],
     // Système de Crédits (Usage Credits)
     credits: {
       type: Number,

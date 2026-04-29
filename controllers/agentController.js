@@ -9,39 +9,6 @@ const User = require('../models/User');
 // GET ALL AGENTS WITH ENERGY STATUS
 // GET /api/agents
 // ─────────────────────────────────────────────
-const hireAgent = async (req, res) => {
-  try {
-    const { agentId } = req.body; // 'hera', 'echo', etc.
-    const userId = req.user.id;
-
-    const user = await User.findById(userId);
-    if (!user) return res.status(404).json({ success: false, message: "Utilisateur non trouvé" });
-
-    // Vérifier si l'agent est déjà dans la liste
-    if (user.activeAgents.includes(agentId.toLowerCase())) {
-      return res.status(400).json({ success: false, message: "Cet agent est déjà actif" });
-    }
-
-    // Ajouter l'agent à la liste
-    user.activeAgents.push(agentId.toLowerCase());
-    
-    // Optionnel : On peut déduire de l'énergie ici si le "Hire" coûte quelque chose
-    // user.energyBalance -= 100; 
-
-    await user.save();
-
-    console.log(`👤 [USER] ${user.email} a recruté l'agent : ${agentId}`);
-
-    res.json({
-      success: true,
-      message: `Agent ${agentId} recruté avec succès !`,
-      activeAgents: user.activeAgents
-    });
-  } catch (error) {
-    console.error('❌ Error hireAgent:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-};
 const getAllAgents = async (req, res) => {
   try {
     const agents = await Agent.find({ status: 'active' }).sort({ name: 1 });
@@ -714,6 +681,5 @@ module.exports = {
   buyEnergy,
   getEnergyBalance,
   powerAgents,
-  initializeAgents,
-  hireAgent
+  initializeAgents
 };

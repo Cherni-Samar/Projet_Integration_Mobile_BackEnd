@@ -19,50 +19,103 @@ const ownerFilter = (req) => {
 // ==========================
 // 📩 RECEIVE EMAIL
 // ==========================
-
 exports.receiveEmail = async (req, res) => {
   const { subject, sender, content } = req.body;
 
   if (!subject || !content) {
-    return res.status(400).json({ success: false, message: "Subject et content requis" });
+    return res.status(400).json({
+      success: false,
+      message: "Subject et content requis",
+    });
   }
 
   try {
-    const ownerId = req.user?.id ? new mongoose.Types.ObjectId(req.user.id) : null;
+    const fullMessage = `Sujet: ${subject}\n\n${content}`;
 
-    // 1. Enregistrement du mail
+    const analysis = await echoService.sendTextMessage(
+      fullMessage,
+      sender || "unknown",
+      "Analyse ce message. Réponds UNIQUEMENT avec JSON: summary, isUrgent, isSpam, priority, actions, category"
+    );
+
+    const ownerId = req.user?.id
+      ? new mongoose.Types.ObjectId(req.user.id)
+      : null;
+
     const newEmail = await InboxEmail.create({
       subject,
       sender: sender || "unknown@email.com",
       content,
+      summary: analysis.summary || content.substring(0, 100),
+      isUrgent: analysis.isUrgent === true,
+      isSpam: analysis.isSpam === true,
+      priority: analysis.priority || "medium",
+      actions: Array.isArray(analysis.actions) ? analysis.actions : [],
+      category: analysis.category || "inbox",
       receivedAt: new Date(),
       isRead: false,
       ownerId,
       source: "receive",
     });
 
-    console.log(`📥 Nouveau mail de ${sender} reçu.`);
-
-    // 2. ✅ APPEL À DEXO POUR L'ANALYSE DE PROJET (L'intelligence)
-    // On importe le contrôleur Dexo ici
-    const dexo = require('./dexoController'); 
-    const projectData = await dexo.analyzeAndRouteEmail(newEmail._id);
-
     await inboxStatsService.syncMessageStatsCache();
 
-    // 3. Réponse au client
+    // ==========================
+    // 🤖 AUTO REPLY
+    // ==========================
+    let autoReply = { sent: false };
+
+    if (!newEmail.isSpam) {
+      try {
+        const senderName = sender ? sender.split("@")[0] : "Utilisateur";
+
+        const reply = await echoService.sendTextMessage(
+          fullMessage,
+          sender,
+          `Réponds pro. Commence par Bonjour ${senderName}`
+        );
+
+        const replyText =
+          reply.fullResponse ||
+          reply.summary ||
+          "Bonjour, merci pour votre message.";
+
+        const pendingDoc = await InboxEmail.create({
+          subject: "Re: " + subject,
+          sender: "echo@e-team.com",
+          content: replyText,
+          category: "auto_reply_pending",
+          inReplyTo: newEmail._id,
+          ownerId,
+        });
+
+        autoReplyManager.scheduleReply(
+          { id: newEmail._id.toString() },
+          analysis,
+          replyText
+        );
+
+        autoReply = {
+          pending: true,
+          content: replyText,
+          pendingEmailId: pendingDoc._id.toString(),
+        };
+      } catch (err) {
+        autoReply = { error: err.message };
+      }
+    }
+
     res.json({
       success: true,
-      message: "Email reçu et analysé par le Superviseur Dexo",
-      projectDetected: projectData ? projectData.title : "Aucun projet détecté",
-      emailId: newEmail._id
+      email: emailToClient(newEmail),
+      analysis,
+      autoReply,
     });
-
   } catch (error) {
-    console.error("❌ Erreur receiveEmail:", error.message);
     res.status(500).json({ success: false, error: error.message });
   }
 };
+
 // ==========================
 // 📥 GET ALL EMAILS
 // ==========================

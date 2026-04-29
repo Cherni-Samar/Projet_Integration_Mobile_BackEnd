@@ -5,48 +5,32 @@ const hera    = require('../controllers/heraController');
 const dexo    = require('../controllers/dexoController'); 
 const timo    = require('../controllers/timoController');
 const vocalAuto = require('../services/automatedBriefing');
-const authMiddleware = require('../middleware/authMiddleware');
+
 const upload = multer({ dest: 'uploads/resumes/' });
-const { triggerStaffingForUser } = require('../services/staffingEventService');
+
 // --- ROUTES EMPLOYÉ ---
 router.post('/leave-request',            hera.requestLeave);
-router.post('/onboarding', authMiddleware, hera.onboarding);
-router.post('/resignation', authMiddleware, hera.processResignation);
-router.post('/request-doc', dexo.requestDocument);
-router.post('/candidate/apply', upload.single('resume_file'), hera.processCandidacy);
-router.post('/candidate/apply', upload.single('resume_file'), hera.processCandidacy);
+router.post('/onboarding',               hera.onboarding);
+router.post('/resignation',              hera.processResignation);
+router.post('/request-doc',              dexo.requestDocument);
+
 // --- ROUTES ADMIN ---
-// --- ROUTES ADMIN (PROTÉGÉES) ---
-router.post('/admin/check-staffing', authMiddleware, hera.checkStaffingNeeds);
-router.post('/admin/hire/:id', authMiddleware, hera.hireCandidate);
-
-router.get('/admin/stats', authMiddleware, hera.getAdminStats);
-router.get('/admin/employees', authMiddleware, hera.getAllEmployees);
-router.get('/admin/recent-actions', authMiddleware, hera.getRecentActions);
-
-router.get('/admin/dexo-checkup', authMiddleware, dexo.getDailyCheckUp);
-router.get('/admin/document-actions', authMiddleware, dexo.getDocumentActions);
-router.get('/admin/timo-tasks', authMiddleware, timo.getTimoTasks);
-router.get('/admin/timo-inbox', authMiddleware, timo.getTimoInbox);
-
-router.get('/admin/opportunities', authMiddleware, dexo.getOpportunities);
-router.post('/admin/approve-project', authMiddleware, dexo.approveProject);
-
-router.get('/admin/agent-interactions', authMiddleware, hera.getAgentInteractions);
-router.get('/admin/agent-interactions/stats', authMiddleware, hera.getAgentInteractionStats);
+router.post('/admin/check-staffing',     hera.checkStaffingNeeds);
+router.post('/admin/hire/:id',           hera.hireCandidate);
+router.get ('/admin/stats',              hera.getAdminStats);
+router.get ('/admin/employees',          hera.getAllEmployees);
+router.get ('/admin/recent-actions',     hera.getRecentActions);
+router.get ('/admin/dexo-checkup',       dexo.getDailyCheckUp);
+router.get ('/admin/document-actions',   dexo.getDocumentActions);
 
 // --- AGENTS ---
 router.post('/chat',                     hera.chat);
 router.post('/vapi-webhook',             hera.vapiWebhook);
 router.get ('/admin/timo-tasks',         timo.getTimoTasks);
 router.get ('/admin/timo-inbox',         timo.getTimoInbox);
-router.get('/admin/opportunities', dexo.getOpportunities);
-router.post('/admin/approve-project', dexo.approveProject);
-
 // Dans routes/heraRoutes.js
 router.get('/admin/agent-interactions', hera.getAgentInteractions);
 router.get('/admin/agent-interactions/stats', hera.getAgentInteractionStats);
-
 router.get('/admin/trigger-vocal', async (req, res) => {
   try {
     await vocalAuto.runAutomatedVocalBriefing();
@@ -54,21 +38,4 @@ router.get('/admin/trigger-vocal', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-
-//testtt 
-router.post('/test/staffing/:userId', authMiddleware, async (req, res) => {
-  try {
-    await triggerStaffingForUser(req.params.userId);
-
-    res.json({
-      success: true,
-      message: 'Hera staffing analysis triggered',
-    });
-  } catch (err) {
-    res.status(500).json({
-      success: false,
-      message: err.message,
-    });
-  }
-});
 module.exports = router;

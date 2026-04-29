@@ -2,7 +2,6 @@ const Expense = require('../models/Expense');
 const User = require('../models/User');
 const Employee = require('../models/Employee');
 const Reminder = require('../models/Reminder');
-const Budget = require('../models/Budget');
 const axios = require('axios');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const Groq = require('groq-sdk');
@@ -358,24 +357,29 @@ async function analyzeReceiptWithMistral(base64String, mimeType) {
 async function recalculateBudgetSpent(userId) {
   try {
     const expenses = await Expense.find({ managerId: userId }).lean();
-    const budgets = await Budget.find({ managerId: userId, isActive: true });
+    const user = await User.findById(userId);
     
-    if (!budgets || budgets.length === 0) {
-      return budgets;
+    if (!user || !user.budget) {
+      return user;
     }
 
-    // Update spent values for each budget from real expenses
-    for (const budget of budgets) {
+    // Zero out all spent values first
+    for (const budget of user.budget) {
+      budget.spent = 0;
+    }
+
+    // Sum expenses by category and update matching budgets
+    for (const budget of user.budget) {
       const totalSpent = expenses
-        .filter(e => e.category === budget.category)
+        .filter(e => e.category === budget.project)
         .reduce((sum, e) => sum + (e.amount || 0), 0);
       
       budget.spent = totalSpent;
-      await budget.save();
     }
 
+    await user.save();
     console.log(`[Kash] Budget spent recalculated for user: ${userId}`);
-    return budgets;
+    return user;
   } catch (err) {
     console.error(`[Kash] Error recalculating budget spent: ${err.message}`);
     throw err;
@@ -383,51 +387,51 @@ async function recalculateBudgetSpent(userId) {
 }
 
 /**
- * Generate and send budget alert email with flexible alert types
+ * Generate and send budget alert email via Groq + nodemailer
  */
-async function sendBudgetAlertEmail(user, message, alertType, details) {
+async function sendBudgetAlertEmail(user, matchedBudget, alertLevel, category) {
   try {
+    const percentage = (matchedBudget.spent / matchedBudget.amount) * 100;
+    
     let emailSubject = '';
     let emailContent = '';
 
-    if (alertType === 'BUDGET_EXCEEDED') {
-      const { category, budgetLimit, excess } = details;
-      emailSubject = `🚨 ALERTE BUDGET : ${category} Dépassé (Excess: ${excess.toFixed(2)} DT)`;
+    if (alertLevel === 'CRITICAL') {
+      emailSubject = `🚨 CRITICAL: Budget "${matchedBudget.project}" Exceeded (${percentage.toFixed(0)}%)`;
       emailContent = `
-ALERTE BUDGET - DÉPASSEMENT CRITIQUE
+Budget Alert - CRITICAL
 
-Votre budget pour la catégorie "${category}" a DÉPASSÉ la limite :
-- Limite du budget : ${budgetLimit} DT
-- Montant dépassé : ${excess.toFixed(2)} DT
-- Total dépensé projeté : ${details.projectedSpent.toFixed(2)} DT
+Your budget for "${matchedBudget.project}" has EXCEEDED 100%:
+- Budget Amount: ${matchedBudget.amount} DT
+- Current Spent: ${matchedBudget.spent.toFixed(2)} DT
+- Percentage: ${percentage.toFixed(2)}%
 
-Cette catégorie est maintenant en dépassement. Veuillez examiner vos dépenses et ajuster votre budget ou vos dépenses en conséquence.
+This project is now over budget. Please review your expenses and adjust your budget or spending accordingly.
+
+Recent expense added: ${category}
 
 ---
 Kash Financial Agent
-Système PIM e-team
+e-team PIM System
       `;
-    } else if (alertType === 'BUDGET_WARNING') {
-      const { category, budgetLimit, percentage } = details;
-      emailSubject = `⚠️ ALERTE BUDGET : ${category} à ${percentage}%`;
+    } else if (alertLevel === 'WARNING') {
+      emailSubject = `⚠️ WARNING: Budget "${matchedBudget.project}" at ${percentage.toFixed(0)}%`;
       emailContent = `
-ALERTE BUDGET - ATTENTION
+Budget Alert - WARNING
 
-Votre budget pour "${category}" a atteint ${percentage}% :
-- Limite du budget : ${budgetLimit} DT
-- Total dépensé projeté : ${details.projectedSpent.toFixed(2)} DT
-- Persentage utilisé : ${percentage}%
+Your budget for "${matchedBudget.project}" has reached 80%:
+- Budget Amount: ${matchedBudget.amount} DT
+- Current Spent: ${matchedBudget.spent.toFixed(2)} DT
+- Percentage: ${percentage.toFixed(2)}%
 
-Considérez l'examen de vos dépenses pour rester dans les limites du budget.
+Consider reviewing your spending to stay within budget.
+
+Recent expense added: ${category}
 
 ---
 Kash Financial Agent
-Système PIM e-team
+e-team PIM System
       `;
-    } else {
-      // Generic alert
-      emailSubject = `Budget Alert: ${message}`;
-      emailContent = message;
     }
 
     const result = await emailSender.sendEmail({
@@ -437,10 +441,11 @@ Système PIM e-team
       from: 'kash@e-team.com',
     });
 
-    console.log(`[Kash Alert] ${alertType} email sent to: ${user.email}`);
+    console.log(`[Kash Alert] ${alertLevel} email sent to: ${user.email}`);
     return result;
   } catch (err) {
     console.warn(`[Kash] Failed to send budget alert email: ${err.message}`);
+    // Don't fail the expense creation if email sending fails
     return { success: false, error: err.message };
   }
 }
@@ -468,20 +473,29 @@ exports.analyzeReceipt = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'imageUrl ou imageBase64 requis' });
     }
 
-    // Atomic energy debit
-    const updatedUser = await User.findOneAndUpdate(
-      { _id: userId, energyBalance: { $gte: ENERGY_COST_ANALYZE_RECEIPT } },
-      { $inc: { energyBalance: -ENERGY_COST_ANALYZE_RECEIPT } },
-      { new: true }
-    ).lean();
-
-    if (!updatedUser) {
+    // ⚡ CONSUME ENERGY FOR DOCUMENT_ANALYSIS
+    const { manualEnergyConsumption } = require('../middleware/energyMiddleware');
+    
+    const energyResult = await manualEnergyConsumption(
+      'kash',
+      'DOCUMENT_ANALYSIS',
+      'AI receipt analysis with Gemini',
+      { 
+        analysisType: 'receipt',
+        aiModel: 'gemini'
+      },
+      userId // Pass userId for user portfolio deduction
+    );
+    
+    if (!energyResult.success) {
       return res.status(403).json({
         success: false,
-        message: "Énergie insuffisante pour l'analyse IA",
-        requiredEnergy: ENERGY_COST_ANALYZE_RECEIPT,
+        message: energyResult.error,
+        requiredEnergy: energyResult.requiredEnergy || ENERGY_COST_ANALYZE_RECEIPT,
       });
     }
+
+    console.log(`⚡ [ENERGY] Kash consumed ${energyResult.energyCost} energy for DOCUMENT_ANALYSIS`);
 
     try {
       const extracted = await analyzeReceiptWithGemini({ inlineData });
@@ -512,15 +526,11 @@ exports.analyzeReceipt = async (req, res, next) => {
             date: extracted.date,
             description: typeof extracted.description === 'string' ? extracted.description : '',
           },
-          energyBalance: updatedUser.energyBalance,
+          energyBalance: energyResult.userNewEnergy || 0,
         },
       });
     } catch (err) {
-      // Rollback energy on Gemini failure
-      await User.updateOne(
-        { _id: userId },
-        { $inc: { energyBalance: ENERGY_COST_ANALYZE_RECEIPT } }
-      );
+      console.error('❌ [KASH] Receipt analysis failed:', err.message);
       throw err;
     }
   } catch (error) {
@@ -551,74 +561,32 @@ exports.addExpense = async (req, res, next) => {
       return res.status(400).json({ success: false, message: 'amount invalide' });
     }
 
-    // Atomic energy debit
-    const updatedUser = await User.findOneAndUpdate(
-      { _id: userId, energyBalance: { $gte: ENERGY_COST_ADD_EXPENSE } },
-      { $inc: { energyBalance: -ENERGY_COST_ADD_EXPENSE } },
-      { new: true }
-    ).lean();
-
-    if (!updatedUser) {
+    // ⚡ CONSUME ENERGY FOR EXPENSE_TRACKING
+    const { manualEnergyConsumption } = require('../middleware/energyMiddleware');
+    
+    const energyResult = await manualEnergyConsumption(
+      'kash',
+      'EXPENSE_TRACKING',
+      `Added expense: ${vendor || 'Unknown vendor'} - ${normalizedAmount} ${currency || 'USD'}`,
+      { 
+        amount: normalizedAmount,
+        currency: currency || 'USD',
+        vendor: vendor || 'Unknown',
+        category: category || 'Other'
+      },
+      userId // Pass userId for user portfolio deduction
+    );
+    
+    if (!energyResult.success) {
       return res.status(403).json({
         success: false,
-        message: 'Énergie insuffisante pour ajouter une dépense',
+        message: energyResult.error,
       });
     }
 
+    console.log(`⚡ [ENERGY] Kash consumed ${energyResult.energyCost} energy for EXPENSE_TRACKING`);
+
     try {
-      // Check budget constraint if category is provided
-      let expenseStatus = 'pending';
-      let budgetAlert = null;
-
-      if (category) {
-        try {
-          const budget = await Budget.findOne({
-            managerId: userId,
-            category: category,
-            isActive: true,
-          });
-
-          if (budget && budget.limit > 0) {
-            const newSpent = budget.spent + normalizedAmount;
-
-            if (newSpent > budget.limit) {
-              // Budget exceeded - flag the expense
-              expenseStatus = 'flagged';
-              budgetAlert = {
-                type: 'BUDGET_EXCEEDED',
-                message: `Attention : Budget ${category} dépassé !`,
-                details: {
-                  category,
-                  budgetLimit: budget.limit,
-                  currentSpent: budget.spent,
-                  newAmount: normalizedAmount,
-                  projectedSpent: newSpent,
-                  excess: newSpent - budget.limit,
-                },
-              };
-              console.log(`[Kash] Budget exceeded for ${category}: ${newSpent} > ${budget.limit}`);
-            } else if (newSpent > budget.limit * 0.8) {
-              // Budget approaching limit - warning
-              budgetAlert = {
-                type: 'BUDGET_WARNING',
-                message: `Attention : Vous avez atteint ${((newSpent / budget.limit) * 100).toFixed(0)}% du budget ${category}`,
-                details: {
-                  category,
-                  budgetLimit: budget.limit,
-                  currentSpent: budget.spent,
-                  newAmount: normalizedAmount,
-                  projectedSpent: newSpent,
-                  percentage: ((newSpent / budget.limit) * 100).toFixed(2),
-                },
-              };
-            }
-          }
-        } catch (budgetCheckErr) {
-          console.warn(`[Kash] Failed to check budget: ${budgetCheckErr.message}`);
-          // Don't fail expense creation if budget check fails
-        }
-      }
-
       const expense = await Expense.create({
         managerId: userId,
         employeeId: employeeId || null,
@@ -628,63 +596,48 @@ exports.addExpense = async (req, res, next) => {
         ...(category !== undefined ? { category } : {}),
         ...(date !== undefined ? { date } : {}),
         ...(description !== undefined ? { description } : {}),
-        status: expenseStatus, // Set status based on budget check
       });
 
-      // Update budget spent if category exists
+      // Recalculate budget spent dynamically instead of incrementing
       if (category) {
         try {
-          await Budget.findOneAndUpdate(
-            {
-              managerId: userId,
-              category: category,
-              isActive: true,
-            },
-            { $inc: { spent: normalizedAmount } },
-            { new: true }
-          );
-          console.log(`[Kash] Updated budget spent for ${category}: +${normalizedAmount}`);
-        } catch (budgetUpdateErr) {
-          console.warn(`[Kash] Failed to update budget spent: ${budgetUpdateErr.message}`);
-        }
-      }
+          const updatedUserForBudget = await recalculateBudgetSpent(userId);
+          
+          // Check if budget alert should be sent
+          if (updatedUserForBudget && updatedUserForBudget.budget) {
+            const matchedBudget = updatedUserForBudget.budget.find(b => b.project === category);
+            
+            if (matchedBudget && matchedBudget.amount > 0) {
+              const percentage = (matchedBudget.spent / matchedBudget.amount) * 100;
+              let alertLevel = null;
+              
+              if (percentage >= 100) {
+                alertLevel = 'CRITICAL';
+              } else if (percentage >= 80) {
+                alertLevel = 'WARNING';
+              }
 
-      // Send budget alert email if needed
-      if (budgetAlert) {
-        try {
-          const user = await User.findById(userId);
-          if (user) {
-            await sendBudgetAlertEmail(user, budgetAlert.message, budgetAlert.type, budgetAlert.details);
+              if (alertLevel) {
+                await sendBudgetAlertEmail(updatedUserForBudget, matchedBudget, alertLevel, category);
+              }
+            }
           }
-        } catch (emailErr) {
-          console.warn(`[Kash] Failed to send budget alert email: ${emailErr.message}`);
-        }
-      }
-
-      // Recalculate budget spent dynamically for user dashboard
-      if (category) {
-        try {
-          await recalculateBudgetSpent(userId);
         } catch (budgetErr) {
           console.warn(`[Kash] Failed to recalculate budget: ${budgetErr.message}`);
+          // Don't fail the expense creation if budget update fails
         }
       }
 
       return res.status(201).json({
         success: true,
-        message: budgetAlert ? budgetAlert.message : 'Dépense ajoutée',
+        message: 'Dépense ajoutée',
         data: {
           expense,
-          energyBalance: updatedUser.energyBalance,
-          budgetAlert: budgetAlert || null,
+          energyBalance: energyResult.userNewEnergy || 0,
         },
       });
     } catch (err) {
-      // Rollback energy on expense creation failure
-      await User.updateOne(
-        { _id: userId },
-        { $inc: { energyBalance: ENERGY_COST_ADD_EXPENSE } }
-      );
+      console.error('❌ [KASH] Expense creation failed:', err.message);
       throw err;
     }
   } catch (error) {
@@ -731,32 +684,28 @@ exports.getBudget = async (req, res, next) => {
       return res.status(401).json({ success: false, message: 'Unauthorized' });
     }
 
-    // Fetch budgets from Budget collection (new system)
-    const budgets = await Budget.find({ managerId: userId, isActive: true });
+    const [expenses, user] = await Promise.all([
+      Expense.find({ managerId: userId }).lean(),
+      User.findById(userId)
+    ]);
 
-    // Fetch expenses to calculate spent amounts
-    const expenses = await Expense.find({ managerId: userId }).lean();
+    if (!user) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
 
-    // Calculate spent for each budget from real expenses
-    const budgetsWithSpent = budgets.map(budget => {
-      const spent = expenses
-        .filter(e => e.category === budget.category)
-        .reduce((sum, e) => sum + (e.amount || 0), 0);
-
-      return {
-        id: budget._id,
-        category: budget.category,
-        limit: budget.limit,
-        spent: spent,
-        currency: budget.currency,
-        createdAt: budget.createdAt,
-        updatedAt: budget.updatedAt,
-      };
-    });
+    // Recalculate spent for each budget from real expenses
+    if (user.budget && Array.isArray(user.budget)) {
+      for (const budget of user.budget) {
+        budget.spent = expenses
+          .filter(e => e.category === budget.project)
+          .reduce((sum, e) => sum + (e.amount || 0), 0);
+      }
+      await user.save();
+    }
 
     return res.status(200).json({
       success: true,
-      data: { budget: budgetsWithSpent }
+      data: { budget: user.budget || [] }
     });
   } catch (error) {
     next(error);
@@ -820,115 +769,6 @@ exports.setBudget = async (req, res, next) => {
       data: { budget: user.budget },
     });
   } catch (error) {
-    next(error);
-  }
-};
-
-/**
- * Create a new budget entry using the Budget model
- * POST /api/kash/budget/create
- * Body: { category, limit, currency }
- */
-exports.createBudget = async (req, res, next) => {
-  try {
-    const userId = req.user?.id;
-
-    if (!userId) {
-      return res.status(401).json({ success: false, message: 'Unauthorized' });
-    }
-
-    const { category, limit, currency } = req.body ?? {};
-
-    // Validate category
-    if (!category || typeof category !== 'string' || !category.trim()) {
-      return res.status(400).json({
-        success: false,
-        message: 'category is required and must be a non-empty string',
-      });
-    }
-
-    const validCategories = ['SaaS', 'Marketing', 'Travel', 'Office', 'Salaries', 'Other'];
-    const normalizedCategory = category.trim();
-    
-    if (!validCategories.includes(normalizedCategory)) {
-      return res.status(400).json({
-        success: false,
-        message: `category must be one of: ${validCategories.join(', ')}`,
-      });
-    }
-
-    // Validate limit
-    if (limit === undefined || limit === null) {
-      return res.status(400).json({ success: false, message: 'limit is required' });
-    }
-
-    const normalizedLimit = Number(limit);
-    if (!Number.isFinite(normalizedLimit) || normalizedLimit <= 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'limit must be a positive number',
-      });
-    }
-
-    // Validate currency
-    const normalizedCurrency = (currency || 'TND').trim().toUpperCase();
-    const validCurrencies = ['TND', 'USD', 'EUR'];
-    
-    if (!validCurrencies.includes(normalizedCurrency)) {
-      return res.status(400).json({
-        success: false,
-        message: `currency must be one of: ${validCurrencies.join(', ')}`,
-      });
-    }
-
-    // Check if budget already exists for this category and manager
-    const existingBudget = await Budget.findOne({
-      managerId: userId,
-      category: normalizedCategory,
-      isActive: true,
-    });
-
-    if (existingBudget) {
-      return res.status(409).json({
-        success: false,
-        message: `Budget for ${normalizedCategory} already exists. Use PUT to update it.`,
-      });
-    }
-
-    // Create new budget
-    const newBudget = await Budget.create({
-      managerId: userId,
-      category: normalizedCategory,
-      limit: normalizedLimit,
-      currency: normalizedCurrency,
-      spent: 0,
-      isActive: true,
-    });
-
-    console.log(`[Kash] Budget created: ${normalizedCategory} - ${normalizedLimit} ${normalizedCurrency}`);
-
-    return res.status(201).json({
-      success: true,
-      message: 'Budget created successfully',
-      data: {
-        budget: {
-          id: newBudget._id,
-          category: newBudget.category,
-          limit: newBudget.limit,
-          spent: newBudget.spent,
-          currency: newBudget.currency,
-          createdAt: newBudget.createdAt,
-        },
-      },
-    });
-  } catch (error) {
-    if (error.code === 11000) {
-      // Duplicate key error
-      return res.status(409).json({
-        success: false,
-        message: 'Budget for this category already exists',
-      });
-    }
     next(error);
   }
 };
@@ -1425,320 +1265,5 @@ exports.submitEmployeeExpense = async (req, res, next) => {
     }
   } catch (error) {
     next(error);
-  }
-};
-
-/**
- * Check if organization can afford to hire a new employee with given salary
- * GET /api/kash/check-hiring?salary=3000
- */
-exports.checkHiringFeasibility = async (req, res, next) => {
-  try {
-    const userId = req.user?.id;
-    const { salary } = req.query;
-
-    if (!userId) {
-      return res.status(401).json({ success: false, message: 'Unauthorized' });
-    }
-
-    if (!salary || isNaN(salary) || salary <= 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Valid salary parameter required',
-      });
-    }
-
-    const salaryAmount = parseFloat(salary);
-
-    try {
-      // Find the Salaries budget for this user
-      const salariesBudget = await Budget.findOne({
-        managerId: userId,
-        category: 'Salaries',
-        isActive: true,
-      }).lean();
-
-      if (!salariesBudget) {
-        return res.status(404).json({
-          success: false,
-          message: 'Salaries budget not found. Please set up a Salaries budget first.',
-        });
-      }
-
-      const remainingBudget = salariesBudget.limit - salariesBudget.spent;
-      const canAfford = remainingBudget >= salaryAmount;
-
-      const response = {
-        success: true,
-        canAfford,
-        salary: salaryAmount,
-        budgetDetails: {
-          category: salariesBudget.category,
-          totalBudget: salariesBudget.limit,
-          spent: salariesBudget.spent,
-          remaining: remainingBudget,
-          currency: salariesBudget.currency,
-        },
-        message: canAfford
-          ? `✅ Organization can afford to hire (Remaining budget: ${remainingBudget.toFixed(2)} ${salariesBudget.currency})`
-          : `❌ Organization cannot afford this salary (Shortfall: ${(salaryAmount - remainingBudget).toFixed(2)} ${salariesBudget.currency})`,
-        hiring: {
-          feasible: canAfford,
-          projectedNewSpent: salariesBudget.spent + salaryAmount,
-          percentageAfterHiring: (((salariesBudget.spent + salaryAmount) / salariesBudget.limit) * 100).toFixed(2),
-        },
-      };
-
-      if (!canAfford) {
-        response.suggestion = `Consider reducing salary to ${remainingBudget.toFixed(2)} ${salariesBudget.currency} or increasing the Salaries budget.`;
-      }
-
-      return res.status(200).json(response);
-    } catch (err) {
-      return res.status(500).json({
-        success: false,
-        message: `Failed to check hiring feasibility: ${err.message}`,
-      });
-    }
-  } catch (error) {
-    next(error);
-  }
-};
-exports.staffingCostAnalysis = async (req, res) => {
-  try {
-const {
-  userId,
-  department,
-  currentCount,
-  targetCount,
-  missing,
-  alreadyApprovedCost = 0,
-} = req.body;
-    if (!userId || !department || missing == null) {
-      return res.status(400).json({
-        success: false,
-        message: 'userId, department et missing requis',
-      });
-    }
-
-    const employees = await Employee.find({
-  ceo_id: userId,
-  department,
-  status: 'active',
-})
-.select('+salary')
-.lean();
-
-const salaries = employees
-  .map(e => Number(e.salary || 0))
-  .filter(s => s > 0);
-
-const avgSalary =
-  salaries.length > 0
-    ? salaries.reduce((sum, salary) => sum + salary, 0) / salaries.length
-    : 2500;
-
-const estimatedMonthlyCost = avgSalary * Number(missing);
-
-    const salariesBudget = await Budget.findOne({
-      managerId: userId,
-      category: 'Salaries',
-      isActive: true,
-    }).lean();
-
-    if (!salariesBudget) {
-      return res.json({
-        success: true,
-        analysis: {
-          department,
-          currentCount,
-          targetCount,
-          missing,
-          avgSalary,
-          estimatedMonthlyCost,
-          canAfford: false,
-          recommendation:
-            'Aucun budget Salaries trouvé. Kash recommande de créer un budget salaires avant de recruter.',
-        },
-      });
-    }
-
-const remaining =
-  salariesBudget.limit -
-  salariesBudget.spent -
-  Number(alreadyApprovedCost || 0);
-      const canAfford = remaining >= estimatedMonthlyCost;
-
-    return res.json({
-      success: true,
-      analysis: {
-        department,
-        currentCount,
-        targetCount,
-        missing,
-        avgSalary,
-        estimatedMonthlyCost,
-        budgetLimit: salariesBudget.limit,
-        budgetSpent: salariesBudget.spent,
-        budgetRemaining: remaining,
-        alreadyApprovedCost: Number(alreadyApprovedCost || 0),
-        canAfford,
-        recommendation: canAfford
-          ? `Budget OK pour recruter ${missing} profil(s) en ${department}.`
-          : `Budget insuffisant pour ${department}. Manque estimé : ${(estimatedMonthlyCost - remaining).toFixed(2)} ${salariesBudget.currency}.`,
-      },
-    });
-  } catch (err) {
-    res.status(500).json({
-      success: false,
-      error: err.message,
-    });
-  }
-
-};
-exports.staffingAllocationAnalysis = async (req, res) => {
-  try {
-    const { userId, needs = [] } = req.body;
-
-    if (!userId || !Array.isArray(needs) || needs.length === 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'userId et needs requis',
-      });
-    }
-
-    const salariesBudget = await Budget.findOne({
-      managerId: userId,
-      category: 'Salaries',
-      isActive: true,
-    }).lean();
-
-    if (!salariesBudget) {
-      return res.json({
-        success: true,
-        allocation: {
-          approved: [],
-          blocked: needs.map(n => ({
-            department: n.department,
-            requested: Number(n.missing || 0),
-            blocked: Number(n.missing || 0),
-            reason: 'Aucun budget Salaries trouvé',
-          })),
-          budget: null,
-          recommendation: 'Créer un budget Salaries avant de recruter.',
-        },
-      });
-    }
-
-    const priorities = {
-      Tech: 5,
-      Finance: 4,
-      Operations: 3,
-      Marketing: 2,
-      Other: 1,
-    };
-
-    let remainingBudget = salariesBudget.limit - salariesBudget.spent;
-
-    const enrichedNeeds = [];
-
-    for (const need of needs) {
-      const department = need.department;
-      const missing = Number(need.missing || 0);
-
-      if (!department || missing <= 0) continue;
-
-      const employees = await Employee.find({
-        ceo_id: userId,
-        department,
-        status: 'active',
-      })
-        .select('+salary')
-        .lean();
-
-      const salaries = employees
-        .map(e => Number(e.salary || 0))
-        .filter(s => s > 0);
-
-      const avgSalary =
-        salaries.length > 0
-          ? salaries.reduce((sum, s) => sum + s, 0) / salaries.length
-          : 2500;
-
-      enrichedNeeds.push({
-        department,
-        requested: missing,
-        avgSalary,
-        priority: priorities[department] || priorities.Other,
-      });
-    }
-
-    // priorité 1 : donner au moins 1 recrutement aux départements critiques
-    enrichedNeeds.sort((a, b) => b.priority - a.priority);
-
-    const approved = [];
-    const blocked = [];
-
-    for (const need of enrichedNeeds) {
-      let approvedCount = 0;
-
-      for (let i = 0; i < need.requested; i++) {
-        if (remainingBudget >= need.avgSalary) {
-          approvedCount += 1;
-          remainingBudget -= need.avgSalary;
-        } else {
-          break;
-        }
-      }
-
-      if (approvedCount > 0) {
-        approved.push({
-          department: need.department,
-          requested: need.requested,
-          approved: approvedCount,
-          avgSalary: need.avgSalary,
-          estimatedCost: approvedCount * need.avgSalary,
-          priority: need.priority,
-        });
-      }
-
-      const blockedCount = need.requested - approvedCount;
-
-      if (blockedCount > 0) {
-        blocked.push({
-          department: need.department,
-          requested: need.requested,
-          blocked: blockedCount,
-          avgSalary: need.avgSalary,
-          missingBudget: Math.max(0, need.avgSalary * blockedCount - remainingBudget),
-          reason: 'Budget Salaries insuffisant',
-          priority: need.priority,
-        });
-      }
-    }
-
-    return res.json({
-      success: true,
-      allocation: {
-        approved,
-        blocked,
-        budget: {
-          limit: salariesBudget.limit,
-          spent: salariesBudget.spent,
-          initialRemaining: salariesBudget.limit - salariesBudget.spent,
-          finalRemaining: remainingBudget,
-          currency: salariesBudget.currency,
-        },
-        recommendation:
-          approved.length > 0
-            ? `Kash recommande de lancer ${approved.reduce((s, a) => s + a.approved, 0)} recrutement(s) selon la priorité métier.`
-            : 'Kash bloque tous les recrutements : budget Salaries insuffisant.',
-      },
-    });
-  } catch (err) {
-    res.status(500).json({
-      success: false,
-      error: err.message,
-    });
   }
 };

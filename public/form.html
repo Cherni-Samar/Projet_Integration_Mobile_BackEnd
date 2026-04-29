@@ -172,44 +172,19 @@ font-weight: 800;
 <script>
 const API_URL = '/api/hera/candidate/apply';
 
-// ── Mapping département → infos complètes ──
-const DEPT_INFO = {
-  'Tech':       { label: 'Développement Tech',      emoji: '💻', skills: 'JavaScript, Node.js, React, Python' },
-  'Design':     { label: 'Design UX/UI',             emoji: '🎨', skills: 'Figma, Adobe XD, Prototypage' },
-  'Marketing':  { label: 'Marketing Digital',        emoji: '📣', skills: 'SEO, Google Ads, Social Media' },
-  'RH':         { label: 'Ressources Humaines',      emoji: '🤝', skills: 'Recrutement, SIRH, Droit du travail' },
-  'Finance':    { label: 'Finance & Comptabilité',   emoji: '📊', skills: 'Analyse financière, Excel, Reporting' },
-  'Support':    { label: 'Support Client',           emoji: '🎧', skills: 'CRM, Zendesk, Communication' },
-  'Management': { label: 'Direction & Management',   emoji: '🏆', skills: 'Leadership, Gestion de projet, OKR' },
-};
-
+// ── Pré-remplir le département depuis l'URL (si vient de LinkedIn) ──
 const urlParams = new URLSearchParams(window.location.search);
 const deptFromUrl = urlParams.get('department');
-
-// ── Si département dans l'URL → personnaliser le formulaire ──
-if (deptFromUrl && DEPT_INFO[deptFromUrl]) {
-  const info = DEPT_INFO[deptFromUrl];
-
-  // Changer le titre
-  document.querySelector('h2').textContent = `Postuler — ${info.emoji} ${info.label}`;
-
-  // Ajouter un badge de poste sous le titre
-  const badge = document.createElement('div');
-  badge.style.cssText = 'text-align:center;margin-bottom:20px;';
-  badge.innerHTML = `<span style="background:rgba(204,255,0,0.08);color:#CCFF00;font-size:11px;padding:6px 12px;border-radius:8px;font-weight:700;border:1px solid rgba(204,255,0,0.2);">🛠 ${info.skills}</span>`;
-  document.querySelector('h2').after(badge);
-
-  // Pré-sélectionner et verrouiller le département
+if (deptFromUrl) {
   const select = document.getElementById('department');
   for (let i = 0; i < select.options.length; i++) {
     if (select.options[i].value === deptFromUrl) {
       select.selectedIndex = i;
+      select.style.pointerEvents = 'none';
+      select.style.opacity = '0.7';
       break;
     }
   }
-  select.style.pointerEvents = 'none';
-  select.style.opacity = '0.7';
-  select.style.borderColor = '#CCFF00';
 }
 
 const form = document.getElementById('applyForm');
@@ -247,11 +222,11 @@ body: formData
 
 const result = await response.json();
 if (result.success) {
-showMessage('success', `Candidature transmise avec succès ! Hera IA va analyser votre profil.`);
+showMessage('success', `Candidature transmise avec succès !`);
 form.reset();
 }
 } catch (error) {
-showMessage('error', 'Erreur de connexion. Veuillez réessayer.');
+showMessage('error', 'Erreur de connexion.');
 } finally {
 submitBtn.disabled = false;
 submitBtn.textContent = 'Soumettre ma candidature';

@@ -12,7 +12,17 @@ const mongoose = require('mongoose');
 const timo = require('./timoController');           // ✅ OBLIGATOIRE pour l'appel autonome
 const bcrypt = require('bcryptjs');
 const Document = require('../models/Document'); // ✅ AJOUTE CET IMPORT
-
+ // ✅ Assure-toi d'avoir installé : npm install bcryptjs
+ // ✅ AJOUTE CETTE LIGNE TOUT EN HAUT
+const DEPARTMENT_LIMITS = {
+  Tech: { max_employees: 20, max_interns: 2 },
+  Design: { max_employees: 10, max_interns: 1 },
+  Marketing: { max_employees: 15, max_interns: 2 },
+  RH: { max_employees: 5, max_interns: 0 },
+  Finance: { max_employees: 8, max_interns: 0 },
+  Support: { max_employees: 12, max_interns: 1 },
+  Management: { max_employees: 10, max_interns: 0 },
+};
 // ══════════════════════════════════════════════════════════════════════════
 // HELPERS INTERNES
 // ══════════════════════════════════════════════════════════════════════════
@@ -107,58 +117,162 @@ exports.getAllCandidates = async (req, res) => {
 // ── FONCTION : CHECK STAFFING (Alerte Echo) ──
 exports.checkStaffingNeeds = async (req, res) => {
   try {
-    const user = await User.findById(req.user.id);
+    const report = [];
+    const departments = Object.keys(DEPARTMENT_LIMITS);
+    const InboxEmail = require('../models/InboxEmail');
+    const EmailReply = require('../models/EmailReply');
+    const Candidate = require('../models/Candidate'); // Pour vérifier les nouveaux candidats
 
-    if (!user || !user.workforceSettings) {
-      return res.json({
-        success: true,
-        message: 'Aucune configuration workforce',
-        gaps: [],
-      });
-    }
+    // Date de référence : il y a 7 jours
+    const sevenDaysAgo = new Date();
+    sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
-    const gaps = [];
+    for (const dept of departments) {
+      const count = await Employee.countDocuments({ department: dept, status: 'active' });
+      const limit = DEPARTMENT_LIMITS[dept].max_employees;
 
-    for (const dept of user.workforceSettings) {
-      const current = await Employee.countDocuments({
-        ceo_id: req.user.id,
-        department: dept.department,
-      });
-
-      const missing = dept.targetCount - current;
-
-      if (missing > 0) {
-        gaps.push({
-          department: dept.department,
-          current,
-          target: dept.targetCount,
-          missing,
-        });
-
-        // 🔥 créer action Hera
-        await HeraAction.create({
-          ceo_id: req.user.id,
+      // CONDITION 1 : Sous-effectif détecté (< 80%)
+      if (count < limit * 0.8) {
+        
+        // CONDITION 2 : Existe-t-il une alerte envoyée DURANT LES 7 DERNIERS JOURS ?
+        const recentAlert = await HeraAction.findOne({
           action_type: 'absence_alert',
-          triggered_by: 'hera_auto',
-          details: {
-            department: dept.department,
-            missing,
-          },
+          'details.department': dept,
+          created_at: { $gt: sevenDaysAgo } // Plus récent que 7 jours
+        }).sort({ created_at: -1 });
+
+        if (recentAlert) {
+          report.push({ 
+            dept, 
+            status: 'WAITING', 
+            reason: "Une alerte a déjà été envoyée cette semaine. On attend les résultats." 
+          });
+          continue; // On passe au département suivant sans rien envoyer
+        }
+
+        // CONDITION 3 : Si une vieille alerte existe, on vérifie si Echo a répondu 
+        // ET si des candidats ont postulé entre-temps
+        const lastAlertEver = await HeraAction.findOne({
+          action_type: 'absence_alert',
+          'details.department': dept
+        }).sort({ created_at: -1 });
+
+        if (lastAlertEver) {
+          // A-t-on reçu des candidats pour ce département depuis la dernière alerte ?
+          const newCandidates = await Candidate.countDocuments({
+            department: dept,
+            created_at: { $gt: lastAlertEver.created_at }
+          });
+
+          if (newCandidates > 0) {
+            report.push({ 
+              dept, 
+              status: 'OK', 
+              reason: `${newCandidates} nouveaux candidats ont postulé. Recrutement efficace, pas de relance.` 
+            });
+            continue;
+          }
+
+          // Echo a-t-il déjà répondu par un mail de confirmation ?
+          const echoResponse = await InboxEmail.findOne({
+            sender: "echo@e-team.com",
+            to: "hera@e-team.com",
+            receivedAt: { $gt: lastAlertEver.created_at }
+          });
+
+          if (echoResponse) {
+             // Echo a répondu mais pas de candidats après 7 jours ? 
+             // Là on pourrait relancer, mais selon ta règle on attend encore.
+             report.push({ dept, status: 'WAITING', reason: "Echo a publié, on attend que les candidats remplissent le formulaire." });
+             continue;
+          }
+        }
+
+        // SI ON ARRIVE ICI : Soit c'est la 1ère fois, soit ça fait + de 7 jours sans résultats
+        console.log(`📢 [HERA] Alerte Staffing hebdomadaire pour : ${dept}`);
+        
+        // ⚡ CONSUME ENERGY FOR STAFFING ALERT
+        const { manualEnergyConsumption } = require('../middleware/energyMiddleware');
+        
+        // Find user with most energy for energy deduction
+        let userId = null;
+        let energyConsumed = 0;
+        try {
+          const User = require('../models/User');
+          const userWithEnergy = await User.findOne({ energyBalance: { $gt: 0 } }).sort({ energyBalance: -1 });
+          if (userWithEnergy) {
+            userId = userWithEnergy._id.toString();
+            console.log(`⚡ [HERA] Using user portfolio for energy: ${userId} (${userWithEnergy.energyBalance} energy)`);
+          }
+          
+          const energyResult = await manualEnergyConsumption(
+            'hera',
+            'STAFFING_ALERT',
+            `Processed staffing alert for ${dept} department`,
+            { 
+              department: dept,
+              currentCount: count,
+              maxCapacity: limit
+            },
+            userId // Pass userId for user portfolio deduction
+          );
+          
+          if (energyResult.success) {
+            energyConsumed = energyResult.energyCost;
+            console.log(`⚡ [ENERGY] Hera consumed ${energyResult.energyCost} energy for STAFFING_ALERT`);
+          } else {
+            console.warn(`⚠️ [ENERGY] ${energyResult.error} - Continuing with staffing alert`);
+          }
+        } catch (err) {
+          console.warn('⚠️ [HERA] Could not process energy consumption:', err.message);
+        }
+        
+        // 1. Création du mail technique pour Echo
+        const newAlertMail = await InboxEmail.create({
+          sender: "hera@e-team.com",
+          to: "echo@e-team.com",
+          subject: `[STAFFING WEEKLY] Besoin renfort : ${dept}`,
+          content: `Alerte hebdomadaire : Le département ${dept} est à ${count}/${limit}.`,
+          category: 'recrutement',
+          priority: 'high'
         });
+
+        // 2. Appel API Echo
+        try {
+          await fetch('http://localhost:3000/api/echo/receive-staffing-alert', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              emailId: newAlertMail._id,
+              department: dept,
+              currentCount: count,
+              maxCapacity: limit
+            })
+          });
+        } catch (e) { console.warn("Echo inaccessible"); }
+
+        // 3. Log de l'action dans HeraAction (C'est ce log qui bloque les alertes pendant 7 jours)
+        await HeraAction.create({
+          action_type: 'absence_alert',
+          details: { 
+            department: dept, 
+            email_id: newAlertMail._id, 
+            count: count,
+            limit: limit,
+            energyConsumed: energyConsumed
+          },
+          triggered_by: 'hera_auto'
+        });
+
+        report.push({ dept, status: 'SENT', reason: "Alerte hebdomadaire envoyée à Echo." });
+
+      } else {
+        report.push({ dept, status: 'OK', reason: "Effectif suffisant." });
       }
     }
-
-    res.json({
-      success: true,
-      gaps,
-    });
-
+    res.json({ success: true, report });
   } catch (err) {
-    console.error('❌ Staffing error:', err);
-    res.status(500).json({
-      success: false,
-      error: err.message,
-    });
+    res.status(500).json({ error: err.message });
   }
 };
 // --- Garde ta fonction getNextSessionDate() que nous avons écrite avant ---
@@ -582,47 +696,27 @@ exports.urgentLeave = async (req, res) => {
 // ── FONCTION : ONBOARDING (Vraie Bienvenue) ──
 exports.onboarding = async (req, res) => {
   try {
-    const ceoId = req.user.id;
+    const { name, email, password } = req.body;
+    // On génère un mot de passe s'il n'y en a pas
+    const tempPassword = req.body.password || `ET-${Math.floor(1000 + Math.random() * 9000)}`;
 
-    const tempPassword =
-      req.body.password || `ET-${Math.floor(1000 + Math.random() * 9000)}`;
-
+    // ✅ ÉTAPE CRUCIALE : Hachage
     const salt = await bcrypt.genSalt(10);
     const hashedPassword = await bcrypt.hash(tempPassword, salt);
 
+    // Création de l'employé avec le mot de passe HACHÉ
     const employee = await Employee.create({
       ...req.body,
-      email: normalizeEmail(req.body.email),
-      ceo_id: ceoId,
-      password: hashedPassword,
-      status: 'active',
+      password: hashedPassword, // 👈 On enregistre la version cryptée
+      status: 'active'
     });
 
-    await HeraAction.create({
-      ceo_id: ceoId,
-      employee_id: employee._id,
-      action_type: 'onboarding_started',
-      details: {
-        employee_name: employee.name,
-        department: employee.department,
-        role: employee.role,
-      },
-      triggered_by: 'hera_auto',
-    });
+    // Envoi du mail avec le mot de passe en CLAIR (pour que l'utilisateur le connaisse)
+    await mailService.sendWelcomeEmail(employee.email, employee.name, tempPassword);
 
-    await mailService.sendWelcomeEmail(
-      employee.email,
-      employee.name,
-      tempPassword
-    );
-
-    res.status(201).json({
-      success: true,
-      message: 'Onboarding réussi',
-      employee,
-    });
+    res.status(201).json({ success: true, message: "Onboarding réussi" });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    res.status(500).json({ error: err.message });
   }
 };
 exports.getLeaves = async (req, res) => {
@@ -659,66 +753,63 @@ exports.offboarding = async (req, res) => {
 // Placeholders pour les routes admin pour éviter les crashs
 exports.getAdminStats = async (req, res) => {
   try {
-    const ceoId = req.user.id;
-
+    // 1. Compter le total des employés actifs ou en onboarding
     const totalEmployees = await Employee.countDocuments({
-      ceo_id: ceoId,
       status: { $in: ['active', 'onboarding'] },
     });
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
 
-    const employeeIds = await Employee.find({ ceo_id: ceoId }).distinct('_id');
-
+    // 2. Compter les employés en congé AUJOURD'HUI
     const onLeaveToday = await LeaveRequest.countDocuments({
-      employee_id: { $in: employeeIds },
       status: 'approved',
       start_date: { $lte: tomorrow },
-      end_date: { $gte: today },
+      end_date: { $gte: today }
     });
 
+    // 3. Calculer le cumul des jours de congé du mois en cours
     const startOfMonth = new Date(today.getFullYear(), today.getMonth(), 1);
     const endOfMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0);
 
     const monthlyLeaves = await LeaveRequest.aggregate([
       {
         $match: {
-          employee_id: { $in: employeeIds },
           status: 'approved',
-          start_date: { $gte: startOfMonth, $lte: endOfMonth },
-        },
+          start_date: { $gte: startOfMonth, $lte: endOfMonth }
+        }
       },
       {
         $group: {
           _id: null,
-          totalDays: { $sum: '$days' },
-        },
-      },
+          totalDays: { $sum: '$days' }
+        }
+      }
     ]);
 
+    // On renvoie les vrais chiffres au format attendu par Flutter
     return res.json({
       success: true,
       stats: {
         total_employees: totalEmployees,
         on_leave_today: onLeaveToday,
-        monthly_leave_days: monthlyLeaves[0]?.totalDays || 0,
-      },
+        monthly_leave_days: monthlyLeaves[0]?.totalDays || 0
+      }
     });
+
   } catch (error) {
+    console.error('❌ Erreur getAdminStats:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 };
 exports.getAllEmployees = async (req, res) => {
   try {
     // ✅ On ignore les 'inactive' pour ne pas polluer l'écran
-   const employees = await Employee.find({
-  ceo_id: req.user.id,
-  status: { $in: ['active', 'onboarding', 'offboarding'] },
-}).sort({ name: 1 });
+    const employees = await Employee.find({ 
+      status: { $in: ['active', 'onboarding', 'offboarding'] } 
+    }).sort({ name: 1 });
 
     res.json({ success: true, employees });
   } catch (err) {
@@ -729,9 +820,7 @@ exports.getRecentActions = async (req, res) => {
   try {
     const limit = parseInt(req.query.limit) || 8;
 
-    const recentActions = await HeraAction.find({
-      ceo_id: req.user.id,
-    })
+    const recentActions = await HeraAction.find()
       .sort({ created_at: -1 })
       .limit(limit)
       .populate('employee_id', 'name role')
@@ -741,12 +830,14 @@ exports.getRecentActions = async (req, res) => {
       _id: action._id,
       employee_name: action.employee_id?.name || 'Système',
       action_type: action.action_type,
-      details: action.details,
+      // ✅ AJOUTE CETTE LIGNE POUR ENVOYER LES DÉTAILS À FLUTTER
+      details: action.details, 
       created_at: action.created_at,
-      badge: action.triggered_by === 'hera_auto' ? 'IA' : 'ADMIN',
+      badge: action.triggered_by === 'hera_auto' ? 'IA' : 'ADMIN'
     }));
 
     return res.json({ success: true, recent_actions: formattedActions });
+
   } catch (error) {
     res.status(500).json({ success: false, error: error.message });
   }
@@ -818,76 +909,74 @@ exports.processResignation = async (req, res) => {
 
 exports.getAgentInteractions = async (req, res) => {
   try {
-    const rawLogs = await HeraAction.find({
-      ceo_id: req.user.id,
-    })
+    // 1. On récupère les 10 derniers logs bruts de la base de données
+    const rawLogs = await HeraAction.find()
       .sort({ created_at: -1 })
       .limit(10)
       .populate('employee_id', 'name');
 
+    // 2. On prépare un prompt pour que l'IA interprète ces logs
     const prompt = `
-Tu es Dexo, le Superviseur de l'écosystème E-Team.
-Analyse ces logs système et transforme-les en JSON.
+      Tu es Dexo, le Superviseur de l'écosystème E-Team. 
+      Analyse ces logs système et transforme-les en un tableau JSON d'interactions entre agents.
+      
+      LOGS À ANALYSER :
+      ${JSON.stringify(rawLogs)}
 
-LOGS:
-${JSON.stringify(rawLogs)}
+      RÈGLES STRICTES :
+      - Tu dois identifier l'émetteur (sender) et le récepteur (receiver) parmi : hera, echo, timo, dexo, kash.
+      - Pour une 'doc_request', le sender est 'dexo' et le receiver est 'hera'.
+      - Pour une 'absence_alert', le sender est 'hera' et le receiver est 'echo'.
+      - Pour une 'offboarding_started', le sender est 'hera' et le receiver est 'timo'.
+      - 'summary' doit être une phrase technique et pro.
+      - 'status' doit être 'success' ou 'encrypted'.
 
-Retourne uniquement:
-{
-  "interactions": [
-    {
-      "id": "ID_DU_LOG",
-      "sender": "hera|echo|timo|dexo|kash",
-      "receiver": "hera|echo|timo|dexo|kash",
-      "actionType": "type",
-      "summary": "phrase",
-      "timestamp": "ISO_DATE",
-      "status": "success"
-    }
-  ]
-}
-`;
+      FORMAT DE RÉPONSE (JSON UNIQUEMENT) :
+      {
+        "interactions": [
+          { "id": "ID_DU_LOG", "sender": "nom", "receiver": "nom", "actionType": "type", "summary": "phrase", "timestamp": "ISO_DATE", "status": "success" }
+        ]
+      }
+    `;
 
+    // 3. Appel à l'IA pour interpréter les logs
     const aiResponse = await heraAgent.llm.invoke(prompt);
+    
+    // On nettoie la réponse pour être sûr d'avoir du JSON pur
     const cleanJson = aiResponse.content.match(/\{.*\}/s)[0];
     const parsedData = JSON.parse(cleanJson);
 
     res.json({ success: true, ...parsedData });
+
   } catch (err) {
-    res.status(500).json({
-      success: false,
-      error: "L'IA n'a pas pu interpréter les logs.",
-    });
+    console.error("❌ Erreur IA Logs:", err.message);
+    res.status(500).json({ success: false, error: "L'IA n'a pas pu interpréter les logs." });
   }
 };
 // controllers/heraController.js
 
 exports.getAgentInteractionStats = async (req, res) => {
   try {
-    const ceoId = req.user.id;
+    // 1. On compte le total des interactions (logs HeraAction)
+    const total = await HeraAction.countDocuments();
 
-    const total = await HeraAction.countDocuments({ ceo_id: ceoId });
+    // 2. On compte les échanges "Encrypted" (tous les doc_request qui ont un hash)
+    const encrypted = await HeraAction.countDocuments({ action_type: 'doc_request' });
 
-    const encrypted = await HeraAction.countDocuments({
-      ceo_id: ceoId,
-      action_type: 'doc_request',
-    });
-
-    const successful =
-      await HeraAction.countDocuments({
-        ceo_id: ceoId,
-        action_type: { $in: ['absence_alert', 'offboarding_started'] },
-      }) + encrypted;
+    // 3. On compte les succès (on considère les alertes staffing et offboarding comme succès immédiat)
+    const successful = await HeraAction.countDocuments({ 
+      action_type: { $in: ['absence_alert', 'offboarding_started'] } 
+    }) + encrypted;
 
     res.json({
       success: true,
       stats: {
-        total,
-        successful,
-        encrypted,
+        total: total,
+        successful: successful,
+        encrypted: encrypted,
         pending: 0,
-        failed: 0,
-      },
+        failed: 0
+      }
     });
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });

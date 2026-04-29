@@ -26,10 +26,10 @@ const messageRoutes = require('./routes/messageRoutes');
 const paymentRoutes = require('./routes/paymentRoutes');
 const kashRoutes = require('./routes/kashRoutes');
 const activityRoutes = require('./routes/activityRoutes');
-const dexoRoutes = require('./routes/dexoRoutes');
 const predictionRoutes = require('./routes/predictionRoutes');
 
 const errorHandler = require('./middleware/errorHandler');
+const staffingWatcher = require('./services/staffingWatcher');
 const { startEchoSocialMediaAutonomy } = require('./services/echoLinkedInAutonomy');
 const ProductCampaignScheduler = require('./services/productCampaignScheduler.service');
 const { startKashCron, triggerDailyEmailNow, triggerWeeklyEmailNow } = require('./cron/kashCron');
@@ -39,9 +39,14 @@ require('./services/automatedBriefing');
 mongoose.connect(process.env.MONGODB_URI)
   .then(() => {
     console.log('✅ MongoDB Connected');
-    
+
     // Start autonomous watchers AFTER MongoDB is connected
-  // Wait 2 seconds after connection to ensure everything is ready
+    setTimeout(() => {
+      console.log('🕵️ Starting autonomous watchers...');
+      staffingWatcher.watchStaffing().catch(err =>
+        console.error('❌ Staffing watcher error:', err.message)
+      );
+    }, 2000); // Wait 2 seconds after connection to ensure everything is ready
   })
   .catch((err) => {
     console.error('❌ MongoDB Error:', err.message);
@@ -77,7 +82,7 @@ app.get('/health', (req, res) => res.json({ status: 'OK', db: mongoose.connectio
 app.use('/api/auth', authRoutes);
 
 // ✅ Employee Auth routes (Employee portal login)
-app.use('/api/employees', employeeAuthRoutes); 
+app.use('/api/employees', employeeAuthRoutes);
 
 app.use('/api/hera', heraRoutes);
 app.use('/api/emails', emailRoutes);
@@ -86,10 +91,8 @@ app.use('/api/messages', messageRoutes);
 app.use('/api/payment', paymentRoutes);
 app.use('/api/echo', echoRoutes);
 app.use('/api/kash', kashRoutes);
-app.use('/api/activities', activityRoutes);      
-app.use('/api/dexo', dexoRoutes);
-app.use('/api/predictions', predictionRoutes);  
-
+app.use('/api/activities', activityRoutes);
+app.use('/api/predictions', predictionRoutes);  // 🔮 CEO Challenges
 
 // ✅ KASH TEST ROUTES
 app.get('/api/kash/test-daily', async (req, res) => {
@@ -116,6 +119,7 @@ app.listen(PORT, '0.0.0.0', () => {
 🏢 Dashboard: http://localhost:${PORT}/dashboard
 📋 Formulaire candidature : http://localhost:${PORT}/form
 🔗 Configuration Echo : http://localhost:${PORT}/echo-config
+🎮 Quiz Game API : http://localhost:${PORT}/api/game/categories
 🤖 Mode: ${process.env.NODE_ENV || 'development'}
   `);
 

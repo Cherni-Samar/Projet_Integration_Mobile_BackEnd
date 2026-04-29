@@ -371,67 +371,15 @@ exports.receiveHeraStaffingAlert = async (req, res) => {
 
     // ── Mapping spécialité + hard skills par département ─────
     const DEPARTMENT_SKILLS = {
-      Tech:      {
-        specialite: 'Développement logiciel & IA',
-        hardSkills: ['JavaScript / Node.js', 'React / React Native', 'Python', 'MongoDB', 'REST API', 'Git'],
-        missions: ['Développer et maintenir les APIs backend', 'Contribuer aux features IA de l\'écosystème E-Team', 'Collaborer avec les équipes Design et Produit'],
-        contractType: 'CDI / Stage',
-        emoji: '💻'
-      },
-      Design:    {
-        specialite: 'Design UX/UI',
-        hardSkills: ['Figma', 'Adobe XD', 'Prototypage interactif', 'Design System'],
-        missions: ['Concevoir des interfaces intuitives et modernes', 'Créer des prototypes et maquettes', 'Travailler en étroite collaboration avec les développeurs'],
-        contractType: 'CDI / Freelance',
-        emoji: '🎨'
-      },
-      Marketing: {
-        specialite: 'Marketing Digital',
-        hardSkills: ['SEO / SEM', 'Google Analytics', 'Social Media Ads', 'Copywriting', 'Email Marketing'],
-        missions: ['Gérer les campagnes digitales', 'Analyser les performances et KPIs', 'Créer du contenu engageant pour les réseaux sociaux'],
-        contractType: 'CDI / CDD',
-        emoji: '📣'
-      },
-      RH:        {
-        specialite: 'Ressources Humaines',
-        hardSkills: ['Gestion des talents', 'Droit du travail', 'Recrutement', 'SIRH'],
-        missions: ['Piloter le processus de recrutement', 'Accompagner l\'onboarding des nouveaux collaborateurs', 'Gérer les relations sociales et la paie'],
-        contractType: 'CDI',
-        emoji: '🤝'
-      },
-      Finance:   {
-        specialite: 'Finance & Comptabilité',
-        hardSkills: ['Analyse financière', 'Excel avancé', 'Comptabilité générale', 'Reporting'],
-        missions: ['Préparer les reportings financiers mensuels', 'Analyser les budgets et les écarts', 'Assurer la conformité comptable et fiscale'],
-        contractType: 'CDI / Stage',
-        emoji: '📊'
-      },
-      Support:   {
-        specialite: 'Support Client',
-        hardSkills: ['CRM (Zendesk / HubSpot)', 'Ticketing', 'Communication écrite', 'Résolution de problèmes'],
-        missions: ['Traiter les demandes clients avec réactivité', 'Documenter les solutions dans la base de connaissance', 'Collaborer avec les équipes techniques pour les escalades'],
-        contractType: 'CDI / CDD',
-        emoji: '🎧'
-      },
-      Management: {
-        specialite: 'Direction & Management',
-        hardSkills: ['Leadership', 'Gestion de projet', 'Stratégie d\'entreprise', 'OKR / KPI'],
-        missions: ['Piloter les équipes et les projets stratégiques', 'Définir et suivre les objectifs de performance', 'Représenter l\'entreprise auprès des partenaires'],
-        contractType: 'CDI',
-        emoji: '🏆'
-      },
+      Tech:      { specialite: 'Développement logiciel & IA', hardSkills: ['JavaScript/Node.js', 'React/React Native', 'Python', 'MongoDB'] },
+      Design:    { specialite: 'Design UX/UI', hardSkills: ['Figma', 'Adobe XD', 'Prototypage'] },
+      Marketing: { specialite: 'Marketing Digital', hardSkills: ['SEO/SEM', 'Google Analytics', 'Social Media Ads'] },
+      RH:        { specialite: 'Ressources Humaines', hardSkills: ['Gestion des talents', 'Droit du travail'] },
+      Finance:   { specialite: 'Finance & Comptabilité', hardSkills: ['Analyse financière', 'Excel avancé'] },
+      Support:   { specialite: 'Support Client', hardSkills: ['CRM (Zendesk)', 'Ticketing'] },
     };
 
-    const deptInfo = DEPARTMENT_SKILLS[department] || {
-      specialite: department,
-      hardSkills: ['Polyvalence', 'Autonomie'],
-      missions: ['Contribuer au développement de l\'entreprise', 'Travailler en équipe agile'],
-      contractType: 'CDI',
-      emoji: '🚀'
-    };
-
-    const location = process.env.COMPANY_LOCATION || 'Tunis, Tunisie 🇹🇳 | Remote possible';
-    const companyName = process.env.COMPANY_NAME || 'E-Team';
+    const deptInfo = DEPARTMENT_SKILLS[department] || { specialite: department, hardSkills: ['Polyvalence'] };
     const jobDescription = `Poste en ${deptInfo.specialite}. Skills: ${deptInfo.hardSkills.join(', ')}.`;
 
     // ── 0. Créer une JobOffer en BDD ─────
@@ -448,46 +396,19 @@ exports.receiveHeraStaffingAlert = async (req, res) => {
     const publicBase = process.env.PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
     const recruitmentFormUrl = `${publicBase}/form?department=${encodeURIComponent(department)}&job_offer_id=${jobOffer._id}`;
 
-    const linkedinPostText = [
-      `${deptInfo.emoji} ${companyName} recrute — ${deptInfo.specialite}`,
-      ``,
-      `Nous recherchons ${postes > 1 ? postes + ' profils' : 'un profil'} ${deptInfo.specialite} pour rejoindre notre équipe.`,
-      ``,
-      `📍 Localisation : ${location}`,
-      `💼 Contrat : ${deptInfo.contractType}`,
-      ``,
-      `🛠 Stack & Compétences :`,
-      deptInfo.hardSkills.map(s => `• ${s}`).join('\n'),
-      ``,
-      `📋 Missions principales :`,
-      deptInfo.missions.map(m => `• ${m}`).join('\n'),
-      ``,
-      `🔗 Postuler directement : ${recruitmentFormUrl}`,
-      ``,
-      `#Recrutement #${department} #${companyName} #Hiring #Emploi #Tunisie`
-    ].join('\n');
+    const linkedinPostText = `The future of work is agentic. E-Team is scaling. 🚀\n\nOur AI-driven ecosystem is looking for a ${deptInfo.specialite} to join the team.\n\n📍 Role: ${deptInfo.specialite}\n🛠 Skills: ${deptInfo.hardSkills.join(', ')}\n\n📩 Apply here: ${recruitmentFormUrl}\n\n#AI #Innovation #Recrutement #ETeam`;
 
     // ── 2. Publication LinkedIn ──────────────────────────────
     const linkedinService = require('../services/linkedin.service');
-const publishResult = await linkedinService.post(linkedinPostText);
+    const publishResult = await linkedinService.post(linkedinPostText);
 
-if (!publishResult || publishResult.success === false) {
-  console.error("❌ LinkedIn POST FAILED:", publishResult);
-
-  return res.status(500).json({
-    success: false,
-    error: "LinkedIn publication failed",
-    details: publishResult
-  });
-}
-console.log("🔍 LinkedIn result:", publishResult);
     // ── 2.5. ⚡ CONSUME ENERGY FOR ABSENCE_ALERT TASK ────────────────
     const energyResult = await manualEnergyConsumption(
       'echo',
       'ABSENCE_ALERT',
       `Processing staffing alert for ${department}`,
       { department, postes, emailId },
-      req.body.userId // Pass userId if available
+      req.user?.id // Pass userId if available
     );
     
     if (!energyResult.success) {
@@ -775,25 +696,10 @@ exports.getStats = async (req, res) => {
 // ─────────────────────────────────────────────
 exports.getEmails = async (req, res) => {
   try {
-    const ownerId = req.user?.id;
-
-    if (!ownerId) {
-      return res.status(401).json({
-        success: false,
-        error: 'Token manquant',
-      });
-    }
-
-    const emails = await InboxEmail.find({
-      ownerId,
-    })
-      .sort({ receivedAt: -1 })
-      .lean();
-
+    const emails = await InboxEmail.find({}).sort({ receivedAt: -1 }).lean();
     const urgentCount = emails.filter((e) => e.isUrgent && !e.isRead).length;
     const spamCount = emails.filter((e) => e.isSpam).length;
     const unreadCount = emails.filter((e) => !e.isRead).length;
-
     res.json({
       success: true,
       total: emails.length,
@@ -834,14 +740,7 @@ exports.markEmailRead = async (req, res) => {
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({ success: false });
     }
-const email = await InboxEmail.findOneAndUpdate(
-  {
-    _id: id,
-    ownerId: req.user.id,
-  },
-  { isRead: true },
-  { returnDocument: 'after' }
-);
+    const email = await InboxEmail.findByIdAndUpdate(id, { isRead: true }, { returnDocument: 'after' });
     if (!email) return res.status(404).json({ success: false });
     res.json({ success: true });
   } catch (error) {
@@ -861,10 +760,7 @@ exports.deleteEmail = async (req, res) => {
     if (!mongoose.Types.ObjectId.isValid(id)) {
       return res.status(400).json({ success: false });
     }
-const deleted = await InboxEmail.findOneAndDelete({
-  _id: id,
-  ownerId: req.user.id,
-});
+    const deleted = await InboxEmail.findByIdAndDelete(id);
     if (!deleted) return res.status(404).json({ success: false });
     await inboxStatsService.syncMessageStatsCache();
     res.json({ success: true });
