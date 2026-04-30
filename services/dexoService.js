@@ -9,6 +9,7 @@ const pdfGenerator = require('./pdfGenerator');
 const crypto = require('crypto');
 const ActivityLogger = require('./activityLogger.service');
 const { manualEnergyConsumption } = require('../middleware/energyMiddleware');
+const CentralizedEnergyService = require('./energy/centralizedEnergy.service');
 const fs = require('fs');
 const TelegramBot = require('node-telegram-bot-api');
 
@@ -237,13 +238,27 @@ console.log('✅ Action Hera doc_request créée');
     filename: pdfResult.filename,
   };
 }
-  // --- LOGIQUE PRIVÉE : ÉNERGIE ---
+  // --- LOGIQUE PRIVÉE : ÉNERGIE (SÉCURISÉE) ---
   async _consumeEnergy(type, desc) {
-    const User = require('../models/User');
-    const user = await User.findOne({ energyBalance: { $gt: 0 } }).sort({ energyBalance: -1 });
-    if (user) {
-      await manualEnergyConsumption('dexo', type, desc, {}, user._id.toString());
+    const energyResult = await CentralizedEnergyService.consumeForAutonomous({
+      agentName: 'dexo',
+      taskType: type,
+      taskDescription: desc,
+      metadata: {
+        source: 'dexo_service',
+        autonomous: true
+      }
+    });
+    
+    if (!energyResult.success || energyResult.blocked) {
+      console.warn(`⛔ DEXO energy blocked: ${energyResult.securityReason || energyResult.error}`);
+      // Note: Dexo operations continue without energy consumption when blocked
+      // This preserves existing behavior where Dexo tasks complete regardless of energy
+      return false;
     }
+    
+    console.log(`⚡ [DEXO] Energy consumed successfully: ${energyResult.energyCost} from user ${energyResult.validatedUserId}`);
+    return true;
   }
 
   // --- BRIEFING CEO ---

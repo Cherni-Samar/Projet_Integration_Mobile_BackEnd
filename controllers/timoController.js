@@ -2,6 +2,7 @@ const Task = require('../models/Task');
 const HeraAction = require('../models/HeraAction');
 const InboxEmail = require('../models/InboxEmail');
 const ActivityLogger = require('../services/activityLogger.service');
+const CentralizedEnergyService = require('../services/energy/centralizedEnergy.service');
 
 // ── A. FONCTION D'AUTOPLANIFICATION (Appelée par Hera) ──
 // controllers/timoController.js
@@ -51,38 +52,31 @@ exports.autoPlanMeeting = async (participantName, type) => {
         userId: 'current_user'
     });
     
-    // ⚡ CONSUME ENERGY FOR MEETING SCHEDULING
-    const { manualEnergyConsumption } = require('../middleware/energyMiddleware');
-    
-    // Find user with most energy for energy deduction
-    let userId = null;
+    // ⚡ CONSUME ENERGY FOR MEETING SCHEDULING - SECURED
     let energyConsumed = 0;
     try {
-      const User = require('../models/User');
-      const userWithEnergy = await User.findOne({ energyBalance: { $gt: 0 } }).sort({ energyBalance: -1 });
-      if (userWithEnergy) {
-        userId = userWithEnergy._id.toString();
-        console.log(`⚡ [TIMO] Using user portfolio for energy: ${userId} (${userWithEnergy.energyBalance} energy)`);
-      }
-      
-      const energyResult = await manualEnergyConsumption(
-        'timo',
-        'MEETING_SCHEDULED',
-        `Scheduled ${type} meeting for ${participantName}`,
-        { 
+      const energyResult = await CentralizedEnergyService.consumeForAutonomous({
+        agentName: 'timo',
+        taskType: 'MEETING_SCHEDULED',
+        taskDescription: `Scheduled ${type} meeting for ${participantName}`,
+        metadata: { 
           participantName,
           meetingType: type,
           scheduledDate: suggestedDate,
-          taskId: finalTask._id
-        },
-        userId // Pass userId for user portfolio deduction
-      );
+          taskId: finalTask._id,
+          source: 'timo_controller'
+        }
+      });
       
       if (energyResult.success) {
         energyConsumed = energyResult.energyCost;
-        console.log(`⚡ [ENERGY] Timo consumed ${energyResult.energyCost} energy for MEETING_SCHEDULED`);
+        console.log(`⚡ [TIMO] Energy consumed successfully: ${energyResult.energyCost} from user ${energyResult.validatedUserId}`);
+      } else if (energyResult.blocked) {
+        console.warn(`⛔ TIMO energy blocked: ${energyResult.securityReason || energyResult.error}`);
+        // Continue with meeting scheduling even if energy is blocked
+        // This preserves existing behavior where scheduling continues regardless of energy
       } else {
-        console.warn(`⚠️ [ENERGY] ${energyResult.error} - Continuing with meeting scheduling`);
+        console.warn(`⚠️ [TIMO] Energy consumption failed: ${energyResult.error} - Continuing with meeting scheduling`);
       }
     } catch (err) {
       console.warn('⚠️ [TIMO] Could not process energy consumption:', err.message);

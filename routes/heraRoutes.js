@@ -6,11 +6,25 @@ const dexo    = require('../controllers/dexoController');
 const timo    = require('../controllers/timoController');
 const vocalAuto = require('../services/automatedBriefing');
 const authMiddleware = require('../middleware/authMiddleware');
-const { requireAgentAccess } = require('../middleware/agentGuard');
+const {
+  requireAgentAccess,
+  requireEmployeeAgentAccess,
+} = require('../middleware/agentGuard');
 const upload = multer({ dest: 'uploads/cv/' });
 const { triggerStaffingForUser } = require('../services/staffingEventService');
 // --- ROUTES EMPLOYÉ ---
-router.post('/leave-request',            authMiddleware, requireAgentAccess('hera'), hera.requestLeave);
+router.post(
+  '/leave-request',
+  (req, res, next) => {
+    console.log('📩 LEAVE REQUEST BODY:', req.body);
+    next();
+  },
+  requireEmployeeAgentAccess('hera'),
+  hera.requestLeave
+);
+router.post('/urgent-leave', requireEmployeeAgentAccess('hera'), hera.urgentLeave);
+router.get('/leaves/:employee_id', requireEmployeeAgentAccess('hera'), hera.getLeaves);
+router.get('/history/:employee_id', requireEmployeeAgentAccess('hera'), hera.getHistory);
 router.post('/onboarding',                authMiddleware, requireAgentAccess('hera'), hera.onboarding);
 router.post('/resignation',               authMiddleware, requireAgentAccess('hera'), hera.processResignation);
 router.post('/request-doc', dexo.requestDocument);
