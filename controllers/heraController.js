@@ -277,36 +277,7 @@ exports.checkStaffingNeeds = async (req, res) => {
 };
 // --- Garde ta fonction getNextSessionDate() que nous avons écrite avant ---
 
-exports.processCandidacy = async (req, res) => {
-  try {
-    const { name, email, resume_text, department } = req.body;
-    // ✅ On récupère le fichier envoyé
-    const resume_url = req.file ? req.file.path : null;
-
-    // Logic IA (Inchangée)
-    const analysis = await heraAgent.analyzeCandidate(resume_text, department);
-    const score = Number(analysis.score) || 0;
-    if (score > 80) {
-      // ✅ REMPLACE PAR CE NOM (Étape 1 : Entretien individuel)
-      await mailService.sendInterviewInvitation(email, name);
-      await Candidate.create({
-        name,
-        email,
-        department,
-        resume_text,
-        resume_url, // 👈 Le chemin vers le PDF est stocké ici
-        status: score >= 80 ? 'interview_scheduled' : 'applied',
-        score_ia: score
-      });
-    } else {
-      await mailService.sendCandidacyConfirmation(email, name);
-      await Candidate.create({ name, email, status: 'applied', score_ia: score, resume_text });
-    }
-    res.json({ success: true, score });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-};
+// processCandidacy est défini plus bas avec le flow email corrigé
 
 exports.hireCandidate = async (req, res) => {
   try {

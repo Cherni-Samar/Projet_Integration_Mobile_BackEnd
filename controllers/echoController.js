@@ -396,10 +396,16 @@ exports.receiveHeraStaffingAlert = async (req, res) => {
     const publicBase = process.env.PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
     const recruitmentFormUrl = `${publicBase}/form?department=${encodeURIComponent(department)}&job_offer_id=${jobOffer._id}`;
 
-    const prompt = `Tu es Echo, l'agent IA de communication de E-Team.
+    // Localisation de l'entreprise
+    const location = process.env.COMPANY_LOCATION || 'Tunis, Tunisie';
+    const companyName = process.env.COMPANY_NAME || 'E-Team';
+
+    const prompt = `Tu es Echo, l'agent IA de communication de ${companyName}.
 Rédige un post LinkedIn professionnel et accrocheur pour recruter ${postes} personne(s).
 
 INFORMATIONS DU POSTE :
+- Entreprise : ${companyName}
+- Localisation : ${location}
 - Département : ${department}
 - Spécialité : ${deptInfo.specialite}
 - Hard Skills recherchés : ${deptInfo.hardSkills.join(', ')}
@@ -408,6 +414,7 @@ INFORMATIONS DU POSTE :
 Contraintes :
 - Maximum 280 mots
 - Commence par une accroche percutante avec un emoji
+- OBLIGATOIRE : mentionne la localisation "${location}"
 - OBLIGATOIRE : mentionne la spécialité "${deptInfo.specialite}"
 - OBLIGATOIRE : liste au moins 4 hard skills parmi : ${deptInfo.hardSkills.join(', ')}
 - OBLIGATOIRE : inclus une courte description du poste (2-3 lignes)
