@@ -1,5 +1,10 @@
 const express = require('express');
-
+const router = express.Router();
+const multer = require('multer');
+const hera = require('../controllers/heraController');
+const dexo = require('../controllers/dexoController');
+const timo = require('../controllers/timoController');
+const vocalAuto = require('../services/automatedBriefing');
 const upload = multer({ dest: 'uploads/resumes/' });
 
 // --- ROUTES EMPLOYÉ ---
