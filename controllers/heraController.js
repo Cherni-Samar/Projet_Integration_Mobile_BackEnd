@@ -6,6 +6,7 @@ const mailService = require('../utils/emailService'); // Chemin corrigé selon t
 const heraAgent = require('../services/hera.agent'); // Ton service LangChain
 const JobOffer = require('../models/JobOffer');
 const Candidate = require('../models/Candidate');
+const Budget = require('../models/Budget');
 const dexo = require('../controllers/dexoController'); 
 const InboxEmail = require('../models/InboxEmail'); // ✅ AJOUTE CETTE LIGNE// ✅ AJOUTE CECI
 const mongoose = require('mongoose');
@@ -607,6 +608,161 @@ exports.hireCandidate = async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 };
+// ══════════════════════════════════════════════════════════════════════════
+// WORKFLOW DE RECRUTEMENT MANUEL (Manager → Finance → Echo → LinkedIn)
+// ══════════════════════════════════════════════════════════════════════════
+
+// POST /api/hera/admin/request-hire
+// Body: { department, title, salary_range, requested_by (employee_id) }
+exports.requestHire = async (req, res) => {
+  try {
+    const { department, title, salary_range, requested_by } = req.body;
+
+    if (!department || !title) {
+      return res.status(400).json({ error: "Les champs 'department' et 'title' sont requis." });
+    }
+
+    const jobOffer = await JobOffer.create({
+      department,
+      title,
+      salary_range: salary_range || null,
+      requested_by: requested_by || null,
+      status: 'pending',
+      origin: 'manual',
+      budget_approved: false,
+    });
+
+    await HeraAction.create({
+      employee_id: requested_by || null,
+      action_type: 'hiring_requested',
+      triggered_by: 'manager',
+      details: { job_offer_id: jobOffer._id, department, title, salary_range },
+    });
+
+    console.log(`📋 [HERA] Demande de recrutement créée : ${title} (${department})`);
+    res.status(201).json({ success: true, jobOffer });
+  } catch (err) {
+    console.error('❌ Erreur requestHire:', err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// POST /api/hera/admin/approve-hire/:jobOfferId
+exports.approveHire = async (req, res) => {
+  try {
+    const { jobOfferId } = req.params;
+
+    const jobOffer = await JobOffer.findById(jobOfferId);
+    if (!jobOffer) return res.status(404).json({ error: "Offre d'emploi non trouvée." });
+    if (jobOffer.status !== 'pending') {
+      return res.status(400).json({ error: "Cette offre n'est pas en attente d'approbation." });
+    }
+
+    // Vérification budgétaire (catégorie Salaries)
+    const budget = await Budget.findOne({ category: 'Salaries', isActive: true });
+    if (budget) {
+      const salaryEstimate = jobOffer.salary_range
+        ? parseFloat(jobOffer.salary_range.toString().replace(/[^\d.]/g, '')) || 0
+        : 0;
+
+      await HeraAction.create({
+        employee_id: jobOffer.requested_by || null,
+        action_type: 'budget_check',
+        triggered_by: 'system',
+        details: {
+          job_offer_id: jobOffer._id,
+          budget_id: budget._id,
+          salary_estimate: salaryEstimate,
+          budget_available: budget.limit - budget.spent,
+        },
+      });
+
+      if (salaryEstimate > 0 && (budget.limit - budget.spent) < salaryEstimate) {
+        return res.status(400).json({
+          error: "Budget Salaires insuffisant.",
+          available: budget.limit - budget.spent,
+          required: salaryEstimate,
+        });
+      }
+
+      if (salaryEstimate > 0) {
+        budget.spent += salaryEstimate;
+        await budget.save();
+        jobOffer.budget_id = budget._id;
+      }
+    }
+
+    jobOffer.budget_approved = true;
+    jobOffer.status = 'open';
+    await jobOffer.save();
+
+    await HeraAction.create({
+      employee_id: jobOffer.requested_by || null,
+      action_type: 'job_offer_approved',
+      triggered_by: 'manager',
+      details: { job_offer_id: jobOffer._id, approved: true },
+    });
+
+    // Notifier Echo pour publication LinkedIn
+    try {
+      const echoResponse = await fetch('http://localhost:3000/api/echo/receive-staffing-alert', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          department: jobOffer.department,
+          shortage: 1,
+          postedBy: 'hera_manual',
+          job_offer_id: jobOffer._id.toString(),
+          title: jobOffer.title,
+        }),
+      });
+
+      if (echoResponse.ok) {
+        await HeraAction.create({
+          employee_id: jobOffer.requested_by || null,
+          action_type: 'job_offer_posted',
+          triggered_by: 'hera_auto',
+          details: { job_offer_id: jobOffer._id, channel: 'linkedin' },
+        });
+        console.log(`📢 [HERA] Offre postée sur LinkedIn via Echo : ${jobOffer.title}`);
+      }
+    } catch (echoErr) {
+      console.error('⚠️ [HERA] Echo non joignable, offre approuvée mais pas postée:', echoErr.message);
+    }
+
+    res.json({ success: true, message: "Offre approuvée et publiée.", jobOffer });
+  } catch (err) {
+    console.error('❌ Erreur approveHire:', err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// POST /api/hera/admin/reject-hire/:jobOfferId
+exports.rejectHire = async (req, res) => {
+  try {
+    const { jobOfferId } = req.params;
+
+    const jobOffer = await JobOffer.findById(jobOfferId);
+    if (!jobOffer) return res.status(404).json({ error: "Offre d'emploi non trouvée." });
+
+    jobOffer.status = 'closed';
+    await jobOffer.save();
+
+    await HeraAction.create({
+      employee_id: jobOffer.requested_by || null,
+      action_type: 'job_offer_approved',
+      triggered_by: 'manager',
+      details: { job_offer_id: jobOffer._id, approved: false },
+    });
+
+    console.log(`🚫 [HERA] Demande de recrutement refusée : ${jobOffer.title}`);
+    res.json({ success: true, message: "Demande de recrutement refusée.", jobOffer });
+  } catch (err) {
+    console.error('❌ Erreur rejectHire:', err);
+    res.status(500).json({ error: err.message });
+  }
+};
+
 // ══════════════════════════════════════════════════════════════════════════
 // EXPORTS POUR LES ROUTES
 // ══════════════════════════════════════════════════════════════════════════

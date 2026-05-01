@@ -17,6 +17,7 @@ const heraActionSchema = new mongoose.Schema({
       'absence_alert', 'performance_alert',
       'contract_renewal', 'contract_end',
       'doc_request',
+      'hiring_requested', 'budget_check', 'job_offer_approved', 'job_offer_posted',
     ],
   },
   details:      { type: mongoose.Schema.Types.Mixed },

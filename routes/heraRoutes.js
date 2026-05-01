@@ -17,6 +17,9 @@ router.post('/request-doc',              dexo.requestDocument);
 // --- ROUTES ADMIN ---
 router.post('/admin/check-staffing',     hera.checkStaffingNeeds);
 router.post('/admin/hire/:id',           hera.hireCandidate);
+router.post('/admin/request-hire',       hera.requestHire);
+router.post('/admin/approve-hire/:jobOfferId', hera.approveHire);
+router.post('/admin/reject-hire/:jobOfferId',  hera.rejectHire);
 router.get ('/admin/stats',              hera.getAdminStats);
 router.get ('/admin/employees',          hera.getAllEmployees);
 router.get ('/admin/recent-actions',     hera.getRecentActions);
