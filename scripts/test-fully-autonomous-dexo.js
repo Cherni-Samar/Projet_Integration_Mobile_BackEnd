@@ -9,7 +9,7 @@ require('dotenv').config();
 const mongoose = require('mongoose');
 const fs = require('fs').promises;
 const path = require('path');
-const autonomousService = require('../services/autonomousService');
+const autonomousService = require('../services/dexo/autonomousService');
 
 async function testFullyAutonomousDexo() {
     try {

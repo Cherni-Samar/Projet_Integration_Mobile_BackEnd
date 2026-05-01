@@ -5,20 +5,22 @@
 const mongoose = require("mongoose");
 const echoAgent = require("../agents/Echoagent");
 const InboxEmail = require("../models/InboxEmail");
-const EmailReply = require('../models/EmailReply'); // ✅ IMPORT DU MODÈLE REPLIES
 const inboxStatsService = require("../services/inboxStatsService");
 const autoReplyManager = require("../services/autoReplyManager");
 const { emailToClient } = require("../utils/emailSerialize");
 const { reinitialiserMemoire } = echoAgent;
 const linkedinService = require("../services/linkedin.service");
 const SocialPost = require("../models/SocialPost");
-const ProductScraperService = require("../services/productScraper.service");
+const ProductScraperService = require("../services/echo/productScraper.service");
 const ProductMarketingGenerator = require("../services/productMarketingGenerator.service");
-const ProductCampaign = require("../models/ProductCampaign");
 const { manualEnergyConsumption } = require("../middleware/energyMiddleware");
 const ActivityLogger = require("../services/activityLogger.service");
-
-//console.log('echoAgent loaded:', echoAgent);
+const { tick: echoAutonomyTick } = require("../services/echoLinkedInAutonomy");
+const ProductCampaignScheduler = require("../services/productCampaignScheduler.service");
+const User = require("../models/User");
+const staffingService = require('../services/echo/staffing.service');
+const campaignService = require('../services/echo/campaign.service');
+const socialService = require('../services/echo/social.service');
 
 // ─────────────────────────────────────────────
 exports.analyser = async (req, res) => {
@@ -352,14 +354,12 @@ exports.sendToHera = async (req, res) => {
 };
 
 // ─────────────────────────────────────────────
-// 🔔 REÇOIT L'ALERTE DE HÉRA → GÉNÈRE + PUBLIE OFFRE LINKEDIN
-// POST /api/echo/receive-staffing-alert
-// ─────────────────────────────────────────────
 // 🔔 REÇOIT L'ALERTE DE HÉRA → GÉNÈRE + PUBLIE OFFRE LINKEDIN + RÉPOND
 // POST /api/echo/receive-staffing-alert
+// Business logic delegated to services/echo/staffing.service.js
+// ─────────────────────────────────────────────
 exports.receiveHeraStaffingAlert = async (req, res) => {
   try {
-    // 1. Récupération des données (Hera doit envoyer emailId pour la liaison)
     const { department, currentCount, maxCapacity, shortage, postedBy, emailId } = req.body;
 
     if (!department) {
@@ -367,160 +367,30 @@ exports.receiveHeraStaffingAlert = async (req, res) => {
     }
 
     console.log(`📩 [ECHO] Alerte staffing reçue pour le département : ${department}`);
-    const postes = shortage || (maxCapacity - currentCount);
 
-    // ── Mapping spécialité + hard skills par département ─────
-    const DEPARTMENT_SKILLS = {
-      Tech:      { specialite: 'Développement logiciel & IA', hardSkills: ['JavaScript/Node.js', 'React/React Native', 'Python', 'MongoDB'] },
-      Design:    { specialite: 'Design UX/UI', hardSkills: ['Figma', 'Adobe XD', 'Prototypage'] },
-      Marketing: { specialite: 'Marketing Digital', hardSkills: ['SEO/SEM', 'Google Analytics', 'Social Media Ads'] },
-      RH:        { specialite: 'Ressources Humaines', hardSkills: ['Gestion des talents', 'Droit du travail'] },
-      Finance:   { specialite: 'Finance & Comptabilité', hardSkills: ['Analyse financière', 'Excel avancé'] },
-      Support:   { specialite: 'Support Client', hardSkills: ['CRM (Zendesk)', 'Ticketing'] },
-    };
-
-    const deptInfo = DEPARTMENT_SKILLS[department] || { specialite: department, hardSkills: ['Polyvalence'] };
-    const jobDescription = `Poste en ${deptInfo.specialite}. Skills: ${deptInfo.hardSkills.join(', ')}.`;
-
-    // ── 0. Créer une JobOffer en BDD ─────
-    const JobOffer = require('../models/JobOffer');
-    const jobOffer = await JobOffer.create({
-      document_type: 'opening',
-      title: `${deptInfo.specialite} — ${postes} poste(s)`,
-      department: department,
-      description: jobDescription,
-      status: 'open',
+    const result = await staffingService.processStaffingAlert({
+      department,
+      currentCount,
+      maxCapacity,
+      shortage,
+      emailId,
+      userId: req.body.userId,
     });
 
-    // ── 1. Préparation du post ──────────────
-    const publicBase = process.env.PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
-    const recruitmentFormUrl = `${publicBase}/form?department=${encodeURIComponent(department)}&job_offer_id=${jobOffer._id}`;
-
-    const linkedinPostText = `The future of work is agentic. E-Team is scaling. 🚀\n\nOur AI-driven ecosystem is looking for a ${deptInfo.specialite} to join the team.\n\n📍 Role: ${deptInfo.specialite}\n🛠 Skills: ${deptInfo.hardSkills.join(', ')}\n\n📩 Apply here: ${recruitmentFormUrl}\n\n#AI #Innovation #Recrutement #ETeam`;
-
-    // ── 2. Publication LinkedIn ──────────────────────────────
-    const linkedinService = require('../services/linkedin.service');
-const publishResult = await linkedinService.post(linkedinPostText);
-
-if (!publishResult || publishResult.success === false) {
-  console.error("❌ LinkedIn POST FAILED:", publishResult);
-
-  return res.status(500).json({
-    success: false,
-    error: "LinkedIn publication failed",
-    details: publishResult
-  });
-}
-console.log("🔍 LinkedIn result:", publishResult);
-    // ── 2.5. ⚡ CONSUME ENERGY FOR ABSENCE_ALERT TASK ────────────────
-    const energyResult = await manualEnergyConsumption(
-      'echo',
-      'ABSENCE_ALERT',
-      `Processing staffing alert for ${department}`,
-      { department, postes, emailId },
-      req.body.userId // Pass userId if available
-    );
-    
-    if (!energyResult.success) {
-      console.log(`⚠️ [ENERGY] ${energyResult.error}`);
-    } else {
-      console.log(`⚡ [ENERGY] Echo consumed ${energyResult.energyCost} energy for ABSENCE_ALERT`);
-    }
-    
-    // ── 2.6. 📝 LOG ACTIVITY ────────────────
-    await ActivityLogger.logEchoActivity(
-      'STAFFING_ALERT',
-      `Processed staffing alert for ${department} department`,
-      {
-        targetAgent: 'hera',
-        description: `Created job posting for ${postes} position(s) in ${department}`,
-        status: 'success',
-        energyConsumed: energyResult.success ? energyResult.energyCost : 0,
-        priority: 'high',
-        metadata: {
-          department,
-          postes,
-          emailId,
-          jobOfferId: jobOffer._id,
-          linkedinPostId: publishResult.postId
-        }
-      }
-    );
-
-    // ── 3. ✅ RÉPONSE TECHNIQUE (Table: email_replies) ────────────────
-    if (emailId) {
-      try {
-        const EmailReply = require('../models/EmailReply');
-        await EmailReply.create({
-          emailId: emailId, // Liaison avec l'ID du mail de Hera
-          replyContent: `Bonjour Hera, j'ai traité ton alerte. L'offre pour ${department} est en ligne. ID LinkedIn: ${publishResult.postId || 'Simulé'}.`,
-          sentBy: 'echo@e-team.com',
-          status: 'sent',
-          channel: 'internal'
-        });
-        console.log("✅ [ECHO] Entrée créée dans la table email_replies");
-      } catch (replyErr) {
-        console.error("❌ Erreur table email_replies:", replyErr.message);
-      }
-    }
-
-    // ── 4. ✅ RÉPONSE VISUELLE (Table: emails - Inbox Hera) ───────────
-    try {
-      await InboxEmail.create({
-        sender: 'echo@e-team.com',
-        to: 'hera@e-team.com', // Echo écrit à Hera
-        subject: `RE: [STAFFING] Recrutement ${department}`,
-        content: `Salut Hera, l'alerte pour ${department} a été traitée. \nPost LinkedIn : ✅ Publié \nFormulaire : ${recruitmentFormUrl}`,
-        receivedAt: new Date(),
-        isRead: false,
-        category: 'recrutement',
-        priority: 'medium',
-        summary: `Recrutement ${department} lancé.`
-      });
-      console.log("✅ [ECHO] Message de confirmation envoyé dans l'Inbox de Hera");
-    } catch (dbErr) {
-      console.warn('⚠️ Erreur trace InboxEmail :', dbErr.message);
-    }
-
-    // ── 5. Réponse finale à l'API ────────────────────────────────────────
     return res.json({
       success: true,
       agent: 'Echo',
       message: "Publication effectuée et réponse enregistrée.",
-      jobOfferId: jobOffer._id,
-      linkedinPost: linkedinPostText
+      jobOfferId: result.jobOfferId,
+      linkedinPost: result.linkedinPost,
     });
 
   } catch (error) {
     console.error('❌ [ECHO] Erreur receiveHeraStaffingAlert:', error);
-    res.status(500).json({ success: false, error: error.message });
-  }
-};
-
-
-// ─────────────────────────────────────────────
-exports.classifyDocument = async (req, res) => {
-  try {
-    const { content } = req.body;
-
-    if (!content || content.trim() === "") {
-      return res.status(400).json({
-        success: false,
-        error: "Le champ 'content' est requis",
-      });
-    }
-
-    console.log(`📄 Classification de document demandée (${content.length} caractères)`);
-
-    const result = await echoAgent.classifyDocument(content);
-
-    res.json(result);
-  } catch (error) {
-    console.error("❌ Erreur route /classify-document:", error);
     res.status(500).json({
       success: false,
-      error: "Erreur interne du serveur",
-      details: error.message,
+      error: error.message,
+      ...(error.linkedinDetails && { details: error.linkedinDetails }),
     });
   }
 };
@@ -820,34 +690,6 @@ exports.resetMemoire = async (req, res) => {
 };
 
 // ─────────────────────────────────────────────
-exports.publishToLinkedIn = async (req, res) => {
-  try {
-    const { content } = req.body;
-    
-    if (!content) {
-      return res.status(400).json({
-        success: false,
-        error: "Le champ 'content' est requis"
-      });
-    }
-    
-    const result = await linkedinService.post(content);
-    
-    res.json({
-      success: true,
-      result: result,
-      timestamp: new Date().toISOString()
-    });
-  } catch (error) {
-    console.error('❌ Erreur publication LinkedIn:', error);
-    res.status(500).json({
-      success: false,
-      error: error.message
-    });
-  }
-};
-
-// ─────────────────────────────────────────────
 exports.sante = (req, res) => {
   res.json({
     status: "✅ Agent Echo opérationnel avec LangChain + Gestion Documents",
@@ -921,27 +763,15 @@ exports.sante = (req, res) => {
  */
 exports.getProductLinkConfig = async (req, res) => {
   try {
-    const productLink = process.env.ECHO_PRODUCT_LINK || null;
-    
-    // Validate the current link
-    let isValid = false;
-    if (productLink && productLink.trim() !== '') {
-      try {
-        const url = new URL(productLink.trim());
-        isValid = (url.protocol === 'http:' || url.protocol === 'https:');
-      } catch {
-        isValid = false;
-      }
-    }
-    
+    const result = socialService.getProductLinkConfig();
     res.json({
       success: true,
       data: {
-        productLink: productLink,
-        isConfigured: !!productLink && productLink.trim() !== '',
-        isValid: isValid
+        productLink: result.productLink,
+        isConfigured: result.isConfigured,
+        isValid: result.isValid
       },
-      timestamp: new Date().toISOString()
+      timestamp: result.timestamp
     });
   } catch (error) {
     console.error('❌ Erreur getProductLinkConfig:', error);
@@ -961,48 +791,37 @@ exports.getProductLinkConfig = async (req, res) => {
 exports.updateProductLinkConfig = async (req, res) => {
   try {
     const { productLink } = req.body;
-    
+
     if (!productLink || typeof productLink !== 'string') {
       return res.status(400).json({
         success: false,
         error: 'Le champ productLink est requis et doit être une chaîne de caractères'
       });
     }
-    
-    // Validate URL format
-    try {
-      const url = new URL(productLink.trim());
-      if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-        return res.status(400).json({
-          success: false,
-          error: 'Le lien doit utiliser le protocole HTTP ou HTTPS'
-        });
-      }
-    } catch (error) {
-      return res.status(400).json({
-        success: false,
-        error: 'Format d\'URL invalide',
-        details: error.message
-      });
-    }
-    
-    // Update environment variable (runtime only)
-    process.env.ECHO_PRODUCT_LINK = productLink.trim();
-    
-    console.log(`✅ [ECHO] Product link updated: ${productLink.trim()}`);
-    
+
+    const result = socialService.updateProductLinkConfig(productLink);
+
     res.json({
       success: true,
       message: 'Product link mis à jour avec succès',
       data: {
-        productLink: productLink.trim(),
-        isConfigured: true,
-        isValid: true
+        productLink: result.productLink,
+        isConfigured: result.isConfigured,
+        isValid: result.isValid
       },
-      timestamp: new Date().toISOString()
+      timestamp: result.timestamp
     });
   } catch (error) {
     console.error('❌ Erreur updateProductLinkConfig:', error);
+
+    if (error.statusCode === 400) {
+      return res.status(400).json({
+        success: false,
+        error: error.message,
+        ...(error.details && { details: error.details })
+      });
+    }
+
     res.status(500).json({
       success: false,
       error: 'Erreur interne du serveur',
@@ -1017,20 +836,16 @@ exports.updateProductLinkConfig = async (req, res) => {
  */
 exports.deleteProductLinkConfig = async (req, res) => {
   try {
-    // Clear environment variable
-    process.env.ECHO_PRODUCT_LINK = '';
-    
-    console.log('🗑️ [ECHO] Product link configuration cleared');
-    
+    const result = socialService.deleteProductLinkConfig();
     res.json({
       success: true,
       message: 'Product link configuration supprimée avec succès',
       data: {
-        productLink: null,
-        isConfigured: false,
-        isValid: false
+        productLink: result.productLink,
+        isConfigured: result.isConfigured,
+        isValid: result.isValid
       },
-      timestamp: new Date().toISOString()
+      timestamp: result.timestamp
     });
   } catch (error) {
     console.error('❌ Erreur deleteProductLinkConfig:', error);
@@ -1052,57 +867,10 @@ exports.deleteProductLinkConfig = async (req, res) => {
  */
 exports.getMobileConfig = async (req, res) => {
   try {
-    const productLink = process.env.ECHO_PRODUCT_LINK || null;
-    
-    // Validate the current link
-    let isValid = false;
-    if (productLink && productLink.trim() !== '') {
-      try {
-        const url = new URL(productLink.trim());
-        isValid = (url.protocol === 'http:' || url.protocol === 'https:');
-      } catch {
-        isValid = false;
-      }
-    }
-    
-    // Get recent posts count
-    const recentPostsCount = await SocialPost.countDocuments({
-      createdAt: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } // Last 7 days
-    });
-    
-    // Get LinkedIn status
-    let linkedinStatus = 'disconnected';
-    try {
-      const hasToken = !!linkedinService.accessToken;
-      linkedinStatus = hasToken ? 'connected' : 'disconnected';
-    } catch {
-      linkedinStatus = 'error';
-    }
-    
+    const data = await socialService.getMobileConfig();
     res.json({
       success: true,
-      data: {
-        productLink: {
-          url: productLink,
-          isConfigured: !!productLink && productLink.trim() !== '',
-          isValid: isValid,
-          status: isValid ? 'active' : 'inactive'
-        },
-        socialMedia: {
-          linkedin: {
-            status: linkedinStatus,
-            lastPost: null // Will be populated later
-          },
-          mastodon: {
-            status: 'active' // Assuming mastodon is always active
-          }
-        },
-        stats: {
-          recentPosts: recentPostsCount,
-          totalPosts: await SocialPost.countDocuments(),
-          postsWithLinks: await SocialPost.countDocuments({ 'productLink.isIncluded': true })
-        }
-      },
+      data,
       timestamp: new Date().toISOString()
     });
   } catch (error) {
@@ -1122,47 +890,36 @@ exports.getMobileConfig = async (req, res) => {
 exports.updateMobileProductLink = async (req, res) => {
   try {
     const { productLink } = req.body;
-    
+
     if (!productLink || typeof productLink !== 'string') {
       return res.status(400).json({
         success: false,
         error: 'Product link is required'
       });
     }
-    
-    // Validate URL format
-    try {
-      const url = new URL(productLink.trim());
-      if (url.protocol !== 'http:' && url.protocol !== 'https:') {
-        return res.status(400).json({
-          success: false,
-          error: 'URL must use HTTP or HTTPS protocol'
-        });
-      }
-    } catch (error) {
-      return res.status(400).json({
-        success: false,
-        error: 'Invalid URL format'
-      });
-    }
-    
-    // Update environment variable
-    process.env.ECHO_PRODUCT_LINK = productLink.trim();
-    
-    console.log(`✅ [ECHO MOBILE] Product link updated: ${productLink.trim()}`);
-    
+
+    const result = socialService.updateMobileProductLink(productLink);
+
     res.json({
       success: true,
       message: 'Product link updated successfully',
       data: {
-        productLink: productLink.trim(),
-        isConfigured: true,
-        isValid: true,
-        status: 'active'
+        productLink: result.productLink,
+        isConfigured: result.isConfigured,
+        isValid: result.isValid,
+        status: result.status
       }
     });
   } catch (error) {
     console.error('❌ Erreur updateMobileProductLink:', error);
+
+    if (error.statusCode === 400) {
+      return res.status(400).json({
+        success: false,
+        error: error.message
+      });
+    }
+
     res.status(500).json({
       success: false,
       error: 'Internal server error'
@@ -1246,8 +1003,6 @@ exports.getMobilePosts = async (req, res) => {
  */
 exports.mobileForcePost = async (req, res) => {
   try {
-    const User = require('../models/User');
-    
     // Get userId from multiple possible sources
     let userId = req.user?.id || req.user?._id || req.userId;
     
@@ -1271,10 +1026,8 @@ exports.mobileForcePost = async (req, res) => {
     console.log(`🔍 [DEBUG] Full req.user object:`, JSON.stringify(req.user));
     console.log(`🔍 [DEBUG] Final userId to use:`, userId);
     
-    const { tick } = require('../services/echoLinkedInAutonomy');
-    
     // Force post generation
-    await tick(true);
+    await echoAutonomyTick(true);
     
     // ⚡ CONSUME ENERGY FOR SOCIAL_POST TASK
     const energyResult = await manualEnergyConsumption(
@@ -1350,85 +1103,10 @@ exports.mobileForcePost = async (req, res) => {
  */
 exports.getMobileDashboard = async (req, res) => {
   try {
-    const now = new Date();
-    const last24h = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-    const last7days = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    const last30days = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-    
-    // Get various stats
-    const [
-      totalPosts,
-      postsLast24h,
-      postsLast7days,
-      postsLast30days,
-      postsWithLinks,
-      linkedinPosts,
-      mastodonPosts,
-      recentPosts
-    ] = await Promise.all([
-      SocialPost.countDocuments(),
-      SocialPost.countDocuments({ createdAt: { $gte: last24h } }),
-      SocialPost.countDocuments({ createdAt: { $gte: last7days } }),
-      SocialPost.countDocuments({ createdAt: { $gte: last30days } }),
-      SocialPost.countDocuments({ 'productLink.isIncluded': true }),
-      SocialPost.countDocuments({ 'platforms.name': 'linkedin' }),
-      SocialPost.countDocuments({ 'platforms.name': 'mastodon' }),
-      SocialPost.find().sort({ createdAt: -1 }).limit(5).lean()
-    ]);
-    
-    // Get product link status
-    const productLink = process.env.ECHO_PRODUCT_LINK || null;
-    let productLinkStatus = 'inactive';
-    if (productLink && productLink.trim() !== '') {
-      try {
-        const url = new URL(productLink.trim());
-        productLinkStatus = (url.protocol === 'http:' || url.protocol === 'https:') ? 'active' : 'invalid';
-      } catch {
-        productLinkStatus = 'invalid';
-      }
-    }
-    
-    // Format recent posts for mobile
-    const formattedRecentPosts = recentPosts.map(post => ({
-      id: post._id,
-      content: post.content.substring(0, 100) + '...',
-      platforms: post.platforms.map(p => p.name),
-      createdAt: post.createdAt,
-      hasProductLink: post.productLink?.isIncluded || false
-    }));
-    
+    const data = await socialService.getMobileDashboard();
     res.json({
       success: true,
-      data: {
-        overview: {
-          totalPosts,
-          postsLast24h,
-          postsLast7days,
-          postsLast30days,
-          postsWithLinks,
-          linkInclusionRate: totalPosts > 0 ? Math.round((postsWithLinks / totalPosts) * 100) : 0
-        },
-        platforms: {
-          linkedin: {
-            name: 'LinkedIn',
-            icon: '💼',
-            posts: linkedinPosts,
-            status: 'active'
-          },
-          mastodon: {
-            name: 'Mastodon',
-            icon: '🐘',
-            posts: mastodonPosts,
-            status: 'active'
-          }
-        },
-        productLink: {
-          url: productLink,
-          status: productLinkStatus,
-          isConfigured: !!productLink && productLink.trim() !== ''
-        },
-        recentActivity: formattedRecentPosts
-      }
+      data
     });
   } catch (error) {
     console.error('❌ Erreur getMobileDashboard:', error);
@@ -1445,150 +1123,10 @@ exports.getMobileDashboard = async (req, res) => {
  */
 exports.getPostsMetrics = async (req, res) => {
   try {
-    const now = new Date();
-    const last24h = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-    const last7days = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    
-    // Get posts metrics
-    const [
-      totalPosts,
-      postsLast24h,
-      successfulPosts,
-      failedPosts,
-      postsWithLinks,
-      linkedinPosts,
-      mastodonPosts,
-      recentPosts
-    ] = await Promise.all([
-      SocialPost.countDocuments(),
-      SocialPost.countDocuments({ createdAt: { $gte: last24h } }),
-      SocialPost.countDocuments({ 'platforms.status': 'success' }),
-      SocialPost.countDocuments({ 'platforms.status': 'failed' }),
-      SocialPost.countDocuments({ 'productLink.isIncluded': true }),
-      SocialPost.countDocuments({ 'platforms.name': 'linkedin', 'platforms.status': 'success' }),
-      SocialPost.countDocuments({ 'platforms.name': 'mastodon', 'platforms.status': 'success' }),
-      SocialPost.find()
-        .sort({ createdAt: -1 })
-        .limit(10)
-        .lean()
-    ]);
-    
-    // Calculate engagement stats
-    const allPosts = await SocialPost.find().lean();
-    const totalLikes = allPosts.reduce((sum, post) => sum + (post.stats?.likes || 0), 0);
-    const totalShares = allPosts.reduce((sum, post) => sum + (post.stats?.shares || 0), 0);
-    const totalComments = allPosts.reduce((sum, post) => sum + (post.stats?.comments || 0), 0);
-    
-    // Format recent activity for mobile
-    const recentActivity = recentPosts.map(post => {
-      const platforms = post.platforms || [];
-      const linkedinPlatform = platforms.find(p => p.name === 'linkedin');
-      const mastodonPlatform = platforms.find(p => p.name === 'mastodon');
-      
-      return {
-        id: post._id,
-        title: post.content.substring(0, 50) + '...',
-        description: `Published ${platforms.length} platform(s)`,
-        timestamp: post.createdAt,
-        status: platforms.some(p => p.status === 'success') ? 'success' : 'failed',
-        platforms: {
-          linkedin: linkedinPlatform ? {
-            status: linkedinPlatform.status,
-            url: linkedinPlatform.url
-          } : null,
-          mastodon: mastodonPlatform ? {
-            status: mastodonPlatform.status,
-            url: mastodonPlatform.url
-          } : null
-        },
-        hasProductLink: post.productLink?.isIncluded || false,
-        stats: post.stats || { likes: 0, shares: 0, comments: 0 }
-      };
-    });
-    
+    const data = await socialService.getPostsMetrics();
     res.json({
       success: true,
-      data: {
-        // Top metrics (for the cards at the top)
-        metrics: {
-          totalPosts: {
-            value: totalPosts,
-            label: 'POSTS',
-            icon: 'post',
-            color: '#9C27B0' // Purple to match your theme
-          },
-          successRate: {
-            value: totalPosts > 0 ? Math.round((successfulPosts / totalPosts) * 100) : 0,
-            label: 'SUCCESS',
-            icon: 'check',
-            color: '#4CAF50' // Green
-          },
-          engagement: {
-            value: totalLikes + totalShares + totalComments,
-            label: 'ENGAGEMENT',
-            icon: 'trending',
-            color: '#FF9800' // Orange
-          }
-        },
-        
-        // Operational metrics (for the cards below)
-        operational: {
-          postsPublished: {
-            value: successfulPosts,
-            label: 'POSTS PUBLISHED',
-            icon: 'check_circle',
-            color: '#9C27B0'
-          },
-          postsFailed: {
-            value: failedPosts,
-            label: 'POSTS FAILED',
-            icon: 'error',
-            color: '#F44336'
-          },
-          postsLast24h: {
-            value: postsLast24h,
-            label: 'LAST 24H',
-            icon: 'schedule',
-            color: '#2196F3'
-          },
-          withProductLink: {
-            value: postsWithLinks,
-            label: 'WITH LINK',
-            icon: 'link',
-            color: '#4CAF50'
-          }
-        },
-        
-        // Platform breakdown
-        platforms: {
-          linkedin: {
-            name: 'LinkedIn',
-            icon: '💼',
-            posts: linkedinPosts,
-            status: 'active'
-          },
-          mastodon: {
-            name: 'Mastodon',
-            icon: '🐘',
-            posts: mastodonPosts,
-            status: 'active'
-          }
-        },
-        
-        // Recent activity (matching your UI format)
-        recentActivity: recentActivity,
-        
-        // Summary stats
-        summary: {
-          totalPosts,
-          successfulPosts,
-          failedPosts,
-          postsWithLinks,
-          linkInclusionRate: totalPosts > 0 ? Math.round((postsWithLinks / totalPosts) * 100) : 0,
-          totalEngagement: totalLikes + totalShares + totalComments,
-          averageEngagement: totalPosts > 0 ? Math.round((totalLikes + totalShares + totalComments) / totalPosts) : 0
-        }
-      },
+      data,
       timestamp: new Date().toISOString()
     });
   } catch (error) {
@@ -1785,65 +1323,38 @@ exports.startProductCampaign = async (req, res) => {
       });
     }
 
-    console.log(`🚀 [CAMPAIGN] Starting campaign for: ${productUrl}`);
-
-    // Check if campaign already exists for this product
-    const existingCampaign = await ProductCampaign.findOne({ 
-      productUrl, 
-      status: { $in: ['active', 'paused'] }
-    });
-
-    if (existingCampaign) {
-      return res.status(400).json({
-        success: false,
-        error: 'Active campaign already exists for this product',
-        campaign: existingCampaign
-      });
-    }
-
-    // Scrape product
-    const scrapeResult = await ProductScraperService.scrapeProduct(productUrl);
-    
-    if (!scrapeResult.success) {
-      return res.status(500).json({
-        success: false,
-        error: 'Failed to scrape product',
-        details: scrapeResult.error
-      });
-    }
-
-    // Create campaign
-    const campaign = await ProductCampaign.create({
+    const campaign = await campaignService.startProductCampaign({
       productUrl,
-      productData: scrapeResult.product,
-      frequency: frequency || '3days',
-      platforms: platforms || ['linkedin', 'mastodon'], // Post to both platforms by default
-      status: 'active',
-      settings: {
-        postStyle: postStyle || 'professional',
-        includeImage: includeImage !== false,
-        autoPost: true
-      }
+      frequency,
+      platforms,
+      postStyle,
+      includeImage,
     });
-
-    console.log(`✅ [CAMPAIGN] Campaign created: ${campaign._id}`);
 
     res.json({
       success: true,
-      campaign: {
-        id: campaign._id,
-        productUrl: campaign.productUrl,
-        productTitle: campaign.productData.title,
-        status: campaign.status,
-        frequency: campaign.frequency,
-        platforms: campaign.platforms,
-        nextPostAt: campaign.calculateNextPostTime(),
-        createdAt: campaign.createdAt
-      },
+      campaign,
       message: 'Campaign started successfully. First post will be generated shortly.'
     });
   } catch (error) {
     console.error('❌ Erreur startProductCampaign:', error);
+
+    if (error.statusCode === 400) {
+      return res.status(400).json({
+        success: false,
+        error: error.message,
+        campaign: error.campaign
+      });
+    }
+
+    if (error.statusCode === 500 && error.scrapeError !== undefined) {
+      return res.status(500).json({
+        success: false,
+        error: error.message,
+        details: error.scrapeError
+      });
+    }
+
     res.status(500).json({
       success: false,
       error: 'Failed to start campaign',
@@ -1858,11 +1369,9 @@ exports.startProductCampaign = async (req, res) => {
  */
 exports.getCampaignStatus = async (req, res) => {
   try {
-    const campaigns = await ProductCampaign.find({ status: { $in: ['active', 'paused'] } })
-      .sort({ createdAt: -1 })
-      .lean();
+    const campaign = await campaignService.getCampaignStatus();
 
-    if (campaigns.length === 0) {
+    if (!campaign) {
       return res.json({
         success: true,
         campaign: null,
@@ -1870,25 +1379,9 @@ exports.getCampaignStatus = async (req, res) => {
       });
     }
 
-    // Return the most recent active campaign
-    const campaign = campaigns[0];
-
     res.json({
       success: true,
-      campaign: {
-        id: campaign._id,
-        productUrl: campaign.productUrl,
-        productTitle: campaign.productData?.title,
-        productImage: campaign.productData?.images?.[0],
-        status: campaign.status,
-        frequency: campaign.frequency,
-        platforms: campaign.platforms,
-        postsGenerated: campaign.postsGenerated,
-        lastPostAt: campaign.lastPostAt,
-        nextPostAt: campaign.nextPostAt,
-        totalEngagement: campaign.totalEngagement,
-        createdAt: campaign.createdAt
-      }
+      campaign
     });
   } catch (error) {
     console.error('❌ Erreur getCampaignStatus:', error);
@@ -1908,39 +1401,23 @@ exports.stopProductCampaign = async (req, res) => {
   try {
     const { campaignId } = req.body;
 
-    let campaign;
-    if (campaignId) {
-      campaign = await ProductCampaign.findById(campaignId);
-    } else {
-      // Stop the most recent active campaign
-      campaign = await ProductCampaign.findOne({ status: 'active' })
-        .sort({ createdAt: -1 });
-    }
-
-    if (!campaign) {
-      return res.status(404).json({
-        success: false,
-        error: 'No active campaign found'
-      });
-    }
-
-    campaign.status = 'stopped';
-    await campaign.save();
-
-    console.log(`🛑 [CAMPAIGN] Campaign stopped: ${campaign._id}`);
+    const campaign = await campaignService.stopProductCampaign(campaignId);
 
     res.json({
       success: true,
       message: 'Campaign stopped successfully',
-      campaign: {
-        id: campaign._id,
-        productUrl: campaign.productUrl,
-        status: campaign.status,
-        postsGenerated: campaign.postsGenerated
-      }
+      campaign
     });
   } catch (error) {
     console.error('❌ Erreur stopProductCampaign:', error);
+
+    if (error.statusCode === 404) {
+      return res.status(404).json({
+        success: false,
+        error: error.message
+      });
+    }
+
     res.status(500).json({
       success: false,
       error: 'Failed to stop campaign',
@@ -1957,31 +1434,23 @@ exports.toggleProductCampaign = async (req, res) => {
   try {
     const { campaignId } = req.body;
 
-    const campaign = await ProductCampaign.findById(campaignId);
-
-    if (!campaign) {
-      return res.status(404).json({
-        success: false,
-        error: 'Campaign not found'
-      });
-    }
-
-    // Toggle between active and paused
-    campaign.status = campaign.status === 'active' ? 'paused' : 'active';
-    await campaign.save();
-
-    console.log(`⏯️ [CAMPAIGN] Campaign ${campaign.status}: ${campaign._id}`);
+    const campaign = await campaignService.toggleProductCampaign(campaignId);
 
     res.json({
       success: true,
       message: `Campaign ${campaign.status} successfully`,
-      campaign: {
-        id: campaign._id,
-        status: campaign.status
-      }
+      campaign
     });
   } catch (error) {
     console.error('❌ Erreur toggleProductCampaign:', error);
+
+    if (error.statusCode === 404) {
+      return res.status(404).json({
+        success: false,
+        error: error.message
+      });
+    }
+
     res.status(500).json({
       success: false,
       error: 'Failed to toggle campaign',
@@ -1998,36 +1467,7 @@ exports.getCampaignHistory = async (req, res) => {
   try {
     const { limit = 50, status } = req.query;
 
-    // Build query
-    const query = {};
-    if (status) {
-      query.status = status;
-    }
-
-    // Get all campaigns sorted by creation date (newest first)
-    const campaigns = await ProductCampaign.find(query)
-      .sort({ createdAt: -1 })
-      .limit(parseInt(limit))
-      .lean();
-
-    // Format response
-    const history = campaigns.map(campaign => ({
-      id: campaign._id,
-      productUrl: campaign.productUrl,
-      productTitle: campaign.productData?.title || 'Unknown Product',
-      productImage: campaign.productData?.images?.[0] || null,
-      productPrice: campaign.productData?.price || 'N/A',
-      productCategory: campaign.productData?.category || 'N/A',
-      status: campaign.status,
-      frequency: campaign.frequency,
-      platforms: campaign.platforms,
-      postsGenerated: campaign.postsGenerated || 0,
-      lastPostAt: campaign.lastPostAt,
-      nextPostAt: campaign.nextPostAt,
-      totalEngagement: campaign.totalEngagement || 0,
-      createdAt: campaign.createdAt,
-      updatedAt: campaign.updatedAt
-    }));
+    const history = await campaignService.getCampaignHistory({ limit, status });
 
     res.json({
       success: true,
@@ -2041,5 +1481,123 @@ exports.getCampaignHistory = async (req, res) => {
       error: 'Failed to get campaign history',
       details: error.message
     });
+  }
+};
+
+// ============================================================
+// LINKEDIN ROUTES — moved from echoroutes.js (Phase 4H4)
+// ============================================================
+
+/**
+ * Get LinkedIn OAuth authorization URL
+ * GET /api/echo/linkedin/auth-url
+ */
+exports.getLinkedInAuthUrl = async (req, res) => {
+  try {
+    const authUrl = linkedinService.getAuthUrl();
+    res.json({
+      success: true,
+      authUrl: authUrl,
+      message: 'Ouvrez cette URL dans votre navigateur pour autoriser Echo à publier sur LinkedIn'
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+/**
+ * LinkedIn OAuth callback — exchange code for access token
+ * GET /api/echo/linkedin/callback
+ */
+exports.linkedInCallback = async (req, res) => {
+  const { code, error } = req.query;
+
+  if (error) {
+    return res.status(400).json({ success: false, error: `LinkedIn error: ${error}` });
+  }
+
+  if (!code) {
+    return res.status(400).json({ success: false, error: 'Code manquant' });
+  }
+
+  try {
+    const result = await linkedinService.getAccessToken(code);
+
+    if (result.success) {
+      res.json({
+        success: true,
+        message: 'Authentification LinkedIn réussie ! Echo peut maintenant publier automatiquement.',
+        redirect: '/api/echo/sante'
+      });
+    } else {
+      res.status(500).json({ success: false, error: result.error });
+    }
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+/**
+ * Post a recruitment announcement to LinkedIn
+ * POST /api/echo/linkedin/recruitment
+ */
+exports.postLinkedInRecruitment = async (req, res) => {
+  const { jobTitle, jobDescription, location, contractType } = req.body;
+
+  try {
+    const recruitmentPost = `
+🚨 **RECRUTEMENT** 🚨
+
+Nous recherchons un(e) ${jobTitle || 'nouveau talent'} pour rejoindre notre équipe !
+
+📌 **Poste** : ${jobTitle || 'À définir'}
+📍 **Lieu** : ${location || 'Télétravail / France'}
+📄 **Type** : ${contractType || 'CDI / CDD'}
+📝 **Description** : ${jobDescription || 'Description du poste à venir'}
+
+✨ Ce que nous offrons :
+- Environnement innovant
+- Équipe dynamique
+- Projets stimulants
+
+📩 **Postulez ici** : ${process.env.RECRUITMENT_FORM_URL || 'http://localhost:3000/candidature'}
+
+#Recrutement #Emploi #Carrière #Job
+    `;
+
+    const result = await linkedinService.post(recruitmentPost);
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+/**
+ * Force an immediate autonomous social media post
+ * POST /api/echo/social/force-post
+ */
+exports.forcePost = async (req, res) => {
+  try {
+    // On passe 'true' pour forcer la publication même si les 3 jours ne sont pas passés
+    await echoAutonomyTick(true);
+    res.json({ success: true, message: '🚀 Publication forcée sur LinkedIn et Mastodon avec image !' });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+/**
+ * Manually trigger the product campaign scheduler check
+ * POST /api/echo/product/campaign/trigger-now
+ */
+exports.triggerCampaignNow = async (req, res) => {
+  try {
+    await ProductCampaignScheduler.triggerNow();
+    res.json({
+      success: true,
+      message: '🚀 Campaign check triggered manually. Check console for results.'
+    });
+  } catch (error) {
+    res.status(500).json({ success: false, error: error.message });
   }
 };

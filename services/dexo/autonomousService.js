@@ -3,8 +3,8 @@
  * Starts and manages DEXO autonomous components
  */
 
-const AutonomousDocumentWatcher = require('../agents/AutonomousDocumentWatcher');
-const DexoAgent = require('../agents/DexoAgent');
+const AutonomousDocumentWatcher = require('../../agents/AutonomousDocumentWatcher');
+const DexoAgent = require('../../agents/DexoAgent');
 
 class AutonomousService {
     constructor() {

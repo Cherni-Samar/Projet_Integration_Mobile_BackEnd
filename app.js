@@ -104,8 +104,6 @@ app.get('/api/kash/test-weekly', async (req, res) => {
 app.use((req, res) => res.status(404).json({ success: false, message: "Route non trouvée" }));
 app.use(errorHandler);
 
-require('./services/automatedBriefing');
-
 // 5. Démarrage du serveur et des Watchers
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {

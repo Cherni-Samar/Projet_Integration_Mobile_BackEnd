@@ -1,4 +1,4 @@
-const HeraAction = require('./models/HeraAction');
+const HeraAction = require('../models/HeraAction');
 
 // ═══════════════════════════════════════════════════════════════
 // 🤖 HELPERS POUR CRÉER DES INTERACTIONS INTER-AGENTS

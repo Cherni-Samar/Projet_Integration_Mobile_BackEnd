@@ -1,23 +1,9 @@
 // services/dexoService.js
-const HeraAction = require('../models/HeraAction');
 const heraAgent = require('./hera.agent');
-const Employee = require('../models/Employee');
-const mailService = require('../utils/emailService');
-const Document = require('../models/Document');
 const ProjectOpportunity = require('../models/ProjectOpportunity');
-const pdfGenerator = require('./pdfGenerator');
-const crypto = require('crypto');
-const ActivityLogger = require('./activityLogger.service');
-const { manualEnergyConsumption } = require('../middleware/energyMiddleware');
 const CentralizedEnergyService = require('./energy/centralizedEnergy.service');
-const fs = require('fs');
-const TelegramBot = require('node-telegram-bot-api');
-
-const telegramToken = process.env.TELEGRAM_BOT_TOKEN;
-const telegramChatId = process.env.TELEGRAM_CHAT_ID;
-const telegramBot = telegramToken
-  ? new TelegramBot(telegramToken, { polling: false })
-  : null;
+const reportService = require('./dexo/report.service');
+const documentService = require('./dexo/document.service');
 class DexoService {
   
   // --- STRATÉGIE & ONBOARDING DYNAMIQUE ---
@@ -152,92 +138,10 @@ Format JSON STRICT :
   }
 
   // --- GÉNÉRATION DE DOCUMENTS (FACTORY) ---
-async processDocumentRequest({ employeeId, docType, details }) {
-  console.log('📄 processDocumentRequest payload:', {
-    employeeId,
-    docType,
-    details,
-  });
-
-  const employee = await Employee.findById(employeeId);
-  if (!employee) throw new Error("Employé non trouvé");
-
-  console.log('👤 Employee trouvé:', employee.email);
-
-  let pdfResult;
-  try {
-    pdfResult = docType === 'attestation'
-      ? await pdfGenerator.generateAttestationPDF(employee, details)
-      : await pdfGenerator.generateBulletinPDF(employee, details);
-
-    console.log('✅ PDF généré:', pdfResult);
-  } catch (e) {
-    console.error('❌ Erreur PDF:', e);
-    throw new Error('PDF_ERROR: ' + e.message);
+  // Delegated to services/dexo/document.service.js
+  async processDocumentRequest({ employeeId, docType, details }) {
+    return documentService.processDocumentRequest({ employeeId, docType, details });
   }
-
-  let newDoc;
-  try {
-    const fileHash = crypto
-      .createHash('md5')
-      .update(pdfResult.filename + Date.now())
-      .digest('hex');
-
-    const stats = fs.statSync(pdfResult.filepath);
-
-    newDoc = await Document.create({
-      filename: pdfResult.filename,
-      originalName: docType === 'attestation' ? 'Attestation' : 'Bulletin',
-      category: docType === 'attestation' ? 'rh' : 'finance',
-      uploadedBy: employeeId,
-      hash: fileHash,
-      filePath: pdfResult.filepath,
-      mimetype: 'application/pdf',
-      size: stats.size,
-      customMetadata: details || {},
-    });
-
-    console.log('✅ Document archivé:', newDoc._id);
-
-  await HeraAction.create({
-  ceo_id: employee.ceo_id,
-  employee_id: employee._id,
-  action_type: 'doc_request',
-  triggered_by: 'employee',
-  details: {
-    document: docType,
-    filename: pdfResult.filename,
-    reason: details?.reason || null,
-    documentId: newDoc._id,
-  },
-});
-
-console.log('✅ Action Hera doc_request créée');
-  } catch (e) {
-    console.error('❌ Erreur Document DB / HeraAction:', e);
-    throw new Error('DOCUMENT_DB_ERROR: ' + e.message);
-  }
-
-  try {
-    await mailService.sendHeraDocumentEmail(employee.email, {
-      name: employee.name,
-      type: "Attestation de Travail",
-      pdfFilename: pdfResult.filename,
-      pdfPath: pdfResult.filepath,
-      details,
-    });
-
-    console.log('✅ Email envoyé à:', employee.email);
-  } catch (e) {
-    console.error('❌ Erreur email:', e);
-    throw new Error('EMAIL_ERROR: ' + e.message);
-  }
-
-  return {
-    docId: newDoc._id,
-    filename: pdfResult.filename,
-  };
-}
   // --- LOGIQUE PRIVÉE : ÉNERGIE (SÉCURISÉE) ---
   async _consumeEnergy(type, desc) {
     const energyResult = await CentralizedEnergyService.consumeForAutonomous({
@@ -262,81 +166,14 @@ console.log('✅ Action Hera doc_request créée');
   }
 
   // --- BRIEFING CEO ---
- async generateDailyReport(ceoId) {
-  const query = ceoId ? { ceo_id: ceoId } : {};
-
-  const actions = await HeraAction.find(query)
-    .sort({ created_at: -1 })
-    .limit(10)
-    .populate('employee_id');
-
-  if (actions.length === 0) return "🏢 Statut : Calme.";
-
-  const summary = actions
-    .map(a => `- ${a.action_type} pour ${a.employee_id?.name || 'Système'}`)
-    .join('\n');
-
-  const aiResponse = await heraAgent.llm.invoke(
-    `Tu es Dexo. Rédige un briefing très court pour le CEO : ${summary}`
-  );
-
-  return aiResponse.content;
-}
-async sendReport(messageType = 'daily', content = '', metadata = {}) {
-  if (!telegramBot || !telegramChatId) {
-    console.warn('⚠️ Telegram non configuré pour Kash report');
-    return false;
+  // Delegated to services/dexo/report.service.js
+  async generateDailyReport(ceoId) {
+    return reportService.generateDailyReport(ceoId);
   }
 
-  const message =
-    messageType === 'daily'
-      ? this._buildDailyMessage(content, metadata)
-      : this._buildWeeklyMessage(content, metadata);
-
-  try {
-    await telegramBot.sendMessage(telegramChatId, message, {
-      disable_web_page_preview: true,
-    });
-
-    console.log(`✅ Kash ${messageType} report envoyé sur Telegram`);
-    return true;
-  } catch (error) {
-    console.error(`❌ Error sending ${messageType} to Telegram:`, error.message);
-    return false;
+  async sendReport(messageType = 'daily', content = '', metadata = {}) {
+    return reportService.sendReport(messageType, content, metadata);
   }
-}
-
-_stripHtmlTags(html) {
-  return html
-    ? html.replace(/<[^>]*>/g, '').replace(/\n\n+/g, '\n').trim()
-    : '';
-}
-
-_buildDailyMessage(content, metadata) {
-  const today = new Date().toLocaleDateString('en-GB');
-  const summary = this._stripHtmlTags(content).substring(0, 500);
-
-  return `📊 Kash Daily Report — ${today}
-
-${summary}
-
-👤 Sent to: ${metadata.userEmail || 'CEO'}
-⏰ Generated by Kash AI`;
-}
-
-_buildWeeklyMessage(content, metadata) {
-  return `📈 Kash Weekly Report
-
-🗓️ ${metadata.startDate} → ${metadata.endDate}
-💰 Dépenses : ${metadata.totalSpent} TND
-⚠️ Budgets à risque : ${metadata.budgetsAtRisk}
-🚨 Paiements en retard : ${metadata.overduePayments}
-
-📝 Résumé :
-${metadata.aiSummary}
-
-👤 Sent to: ${metadata.userEmail || 'CEO'}`;
-}
 }
 
 

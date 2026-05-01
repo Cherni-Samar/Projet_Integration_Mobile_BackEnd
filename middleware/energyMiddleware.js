@@ -2,7 +2,7 @@
 //  MIDDLEWARE - Energy Consumption Tracking
 // =============================================================
 
-const EnergyConsumptionService = require('../services/energyConsumption.service');
+const EnergyConsumptionService = require('../services/energy/energyConsumption.service');
 
 /**
  * Middleware to automatically consume energy when agents perform tasks

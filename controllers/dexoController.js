@@ -2,15 +2,11 @@
 const dexoService = require('../services/dexoService');
 const briefingService = require('../services/dexo/briefing.service');
 const HeraAction = require('../models/HeraAction');
-const heraAgent = require('../services/hera.agent');
 const ProjectOpportunity = require('../models/ProjectOpportunity');
 const User = require('../models/User');
-const Employee = require('../models/Employee');
 const { triggerStaffingForUser } = require('../services/staffingEventService');
-const Document = require('../models/Document');
-const crypto = require('crypto');
-const pdfGenerator = require('../services/pdfGenerator'); 
-// 2. Document Factory
+
+// ── Document Factory ──────────────────────────────────────────────────────────
 
 exports.requestDocument = async (req, res) => {
   try {

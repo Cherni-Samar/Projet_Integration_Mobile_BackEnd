@@ -2,7 +2,7 @@
 //  SERVICE - Energy Consumption Management
 // =============================================================
 
-const Agent = require('../models/Agent');
+const Agent = require('../../models/Agent');
 
 class EnergyConsumptionService {
   
@@ -64,7 +64,7 @@ class EnergyConsumptionService {
       
       // ✅ AGENT OWNERSHIP VALIDATION - Critical Security Check
       if (userId) {
-        const { canUseAgent } = require('../utils/agentGuard');
+        const { canUseAgent } = require('../../utils/agentGuard');
         const guard = await canUseAgent(userId, agentName);
         
         if (!guard.canUse) {
@@ -116,7 +116,7 @@ class EnergyConsumptionService {
       
       if (userId) {
         console.log(`⚡ [ENERGY] Attempting to deduct from user portfolio: ${userId}`);
-        const User = require('../models/User');
+        const User = require('../../models/User');
         const user = await User.findById(userId);
         
         if (user) {
