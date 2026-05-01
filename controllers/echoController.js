@@ -418,7 +418,9 @@ Contraintes :
 - OBLIGATOIRE : mentionne la spécialité "${deptInfo.specialite}"
 - OBLIGATOIRE : liste au moins 4 hard skills parmi : ${deptInfo.hardSkills.join(', ')}
 - OBLIGATOIRE : inclus une courte description du poste (2-3 lignes)
-- Invite à postuler via ce lien : ${recruitmentFormUrl}
+- OBLIGATOIRE : inclus le lien de candidature SEUL sur sa propre ligne, sans point ni ponctuation après :
+📩 Postulez ici : ${recruitmentFormUrl}
+- IMPORTANT : NE JAMAIS mettre de point, virgule ou autre caractère APRÈS le lien
 - Termine avec 5 hashtags pertinents (#Recrutement #Emploi + 3 liés au domaine)
 - Ton : professionnel, dynamique, moderne
 - NE PAS inclure de JSON, uniquement le texte du post
@@ -429,6 +431,10 @@ Rédige UNIQUEMENT le texte du post LinkedIn, sans commentaire.`;
     try {
       const aiResponse = await echoAgent.generateAutoReply(prompt, {}, null);
       linkedinPostText = aiResponse?.trim() || null;
+      // Nettoyer les points/virgules collés au lien
+      if (linkedinPostText) {
+        linkedinPostText = linkedinPostText.replace(new RegExp(recruitmentFormUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '[.,;:!]+', 'g'), recruitmentFormUrl);
+      }
     } catch (aiErr) {
       console.warn('⚠️ IA unavailable, fallback post:', aiErr.message);
       linkedinPostText = null;
