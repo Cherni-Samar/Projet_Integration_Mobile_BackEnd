@@ -108,22 +108,11 @@ app.get('/api/kash/test-weekly', async (req, res) => {
 app.use((req, res) => res.status(404).json({ success: false, message: "Route non trouvée" }));
 app.use(errorHandler);
 
-<<<<<<< HEAD
 require('./services/automatedBriefing');
 
 // 5. Démarrage du serveur et des Watchers
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
-=======
-// 5. Démarrage du serveur
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, '0.0.0.0', async () => {
-  // ✅ Lancer le staffing watcher APRÈS que le serveur et MongoDB sont prêts
-  console.log('🕵️ Starting autonomous watchers...');
-  staffingWatcher.watchStaffing().catch(err => console.error('staffingWatcher initial:', err.message));
-
-  const recruitFormUrl = getRecruitmentFormUrl();
->>>>>>> 640174d (fix: formulaire candidature + emails + ngrok cleanup)
   console.log(`
 🚀 Serveur lancé sur le port ${PORT}
 📍 URL: http://localhost:${PORT}
