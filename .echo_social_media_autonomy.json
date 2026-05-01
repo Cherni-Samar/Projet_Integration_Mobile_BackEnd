@@ -1,6 +1,25 @@
 {
+<<<<<<< HEAD
   "lastAutonomousPostAt": "2026-04-26T17:21:42.985Z",
+=======
+  "lastAutonomousPostAt": "2026-04-26T17:01:08.166Z",
+>>>>>>> 640174d (fix: formulaire candidature + emails + ngrok cleanup)
   "lastPlatforms": [
     "mastodon"
+<<<<<<< HEAD
   ]
+=======
+  ],
+  "lastResults": {
+    "linkedin": {
+      "success": true,
+      "postId": "urn:li:share:7454212955228848128"
+    },
+    "mastodon": {
+      "success": true,
+      "postId": "116472077780109255",
+      "url": "https://mastodon.social/@e_team/116472077780109255"
+    }
+  }
+>>>>>>> 640174d (fix: formulaire candidature + emails + ngrok cleanup)
 }

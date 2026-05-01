@@ -322,7 +322,7 @@ exports.batch = async (req, res) => {
 // ─────────────────────────────────────────────
 exports.sendToHera = async (req, res) => {
   const { subject, content, from } = req.body;
- 
+
   try {
     const response = await fetch('http://localhost:3000/api/hera/receive-email', {
       method: 'POST',
@@ -334,15 +334,15 @@ exports.sendToHera = async (req, res) => {
         type: 'email_from_echo'
       })
     });
-   
+
     const result = await response.json();
-   
+
     res.json({
       success: true,
       message: 'Email envoyé à Hera',
       result: result
     });
-   
+
   } catch (error) {
     res.status(500).json({
       success: false,
@@ -369,24 +369,24 @@ exports.receiveHeraStaffingAlert = async (req, res) => {
     console.log(`📩 [ECHO] Alerte staffing reçue pour le département : ${department}`);
     const postes = shortage || (maxCapacity - currentCount);
 
-    // ── Mapping spécialité + hard skills par département ─────
+    // ── Mapping spécialité + hard skills + postes précis par département ─────
     const DEPARTMENT_SKILLS = {
-      Tech:      { specialite: 'Développement logiciel & IA', hardSkills: ['JavaScript/Node.js', 'React/React Native', 'Python', 'MongoDB'] },
-      Design:    { specialite: 'Design UX/UI', hardSkills: ['Figma', 'Adobe XD', 'Prototypage'] },
-      Marketing: { specialite: 'Marketing Digital', hardSkills: ['SEO/SEM', 'Google Analytics', 'Social Media Ads'] },
-      RH:        { specialite: 'Ressources Humaines', hardSkills: ['Gestion des talents', 'Droit du travail'] },
-      Finance:   { specialite: 'Finance & Comptabilité', hardSkills: ['Analyse financière', 'Excel avancé'] },
-      Support:   { specialite: 'Support Client', hardSkills: ['CRM (Zendesk)', 'Ticketing'] },
+      Tech: { specialite: 'Développement logiciel & IA', hardSkills: ['JavaScript/Node.js', 'React/React Native', 'Python', 'MongoDB', 'DevOps/CI-CD', 'API REST'] },
+      Design: { specialite: 'Design UX/UI', hardSkills: ['Figma', 'Adobe XD', 'Prototypage', 'Design System', 'User Research', 'Responsive Design'] },
+      Marketing: { specialite: 'Marketing Digital', hardSkills: ['SEO/SEM', 'Google Analytics', 'Social Media Ads', 'Content Marketing', 'Email Marketing', 'KPIs & Reporting'] },
+      RH: { specialite: 'Ressources Humaines', hardSkills: ['Gestion des talents', 'SIRH', 'Droit du travail', 'Recrutement', 'Formation', 'Gestion de la paie'] },
+      Finance: { specialite: 'Finance & Comptabilité', hardSkills: ['Comptabilité générale', 'Excel avancé', 'SAP/ERP', 'Analyse financière', 'Trésorerie', 'Fiscalité'] },
+      Support: { specialite: 'Support Client', hardSkills: ['CRM (Zendesk/Freshdesk)', 'Communication écrite', 'Résolution de problèmes', 'ITIL', 'Ticketing', 'Satisfaction client'] },
     };
 
-    const deptInfo = DEPARTMENT_SKILLS[department] || { specialite: department, hardSkills: ['Polyvalence'] };
-    const jobDescription = `Poste en ${deptInfo.specialite}. Skills: ${deptInfo.hardSkills.join(', ')}.`;
+    const deptInfo = DEPARTMENT_SKILLS[department] || { specialite: department, hardSkills: ['Polyvalence', 'Travail en équipe'] };
+    const jobDescription = `Poste en ${deptInfo.specialite}. Compétences requises : ${deptInfo.hardSkills.join(', ')}.`;
 
     // ── 0. Créer une JobOffer en BDD ─────
     const JobOffer = require('../models/JobOffer');
     const jobOffer = await JobOffer.create({
       document_type: 'opening',
-      title: `${deptInfo.specialite} — ${postes} poste(s)`,
+      title: `${titresAffichés} — ${postes} poste(s)`,
       department: department,
       description: jobDescription,
       status: 'open',
@@ -396,46 +396,50 @@ exports.receiveHeraStaffingAlert = async (req, res) => {
     const publicBase = process.env.PUBLIC_BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
     const recruitmentFormUrl = `${publicBase}/form?department=${encodeURIComponent(department)}&job_offer_id=${jobOffer._id}`;
 
-    const linkedinPostText = `The future of work is agentic. E-Team is scaling. 🚀\n\nOur AI-driven ecosystem is looking for a ${deptInfo.specialite} to join the team.\n\n📍 Role: ${deptInfo.specialite}\n🛠 Skills: ${deptInfo.hardSkills.join(', ')}\n\n📩 Apply here: ${recruitmentFormUrl}\n\n#AI #Innovation #Recrutement #ETeam`;
+    const prompt = `Tu es Echo, l'agent IA de communication de E-Team.
+Rédige un post LinkedIn professionnel et accrocheur pour recruter ${postes} personne(s).
 
-    // ── 2. Publication LinkedIn ──────────────────────────────
-    const linkedinService = require('../services/linkedin.service');
-    const publishResult = await linkedinService.post(linkedinPostText);
+INFORMATIONS DU POSTE :
+- Département : ${department}
+- Spécialité : ${deptInfo.specialite}
+- Hard Skills recherchés : ${deptInfo.hardSkills.join(', ')}
+- Nombre de postes : ${postes}
 
-    // ── 2.5. ⚡ CONSUME ENERGY FOR ABSENCE_ALERT TASK ────────────────
-    const energyResult = await manualEnergyConsumption(
-      'echo',
-      'ABSENCE_ALERT',
-      `Processing staffing alert for ${department}`,
-      { department, postes, emailId },
-      req.user?.id // Pass userId if available
-    );
-    
-    if (!energyResult.success) {
-      console.log(`⚠️ [ENERGY] ${energyResult.error}`);
-    } else {
-      console.log(`⚡ [ENERGY] Echo consumed ${energyResult.energyCost} energy for ABSENCE_ALERT`);
+Contraintes :
+- Maximum 280 mots
+- Commence par une accroche percutante avec un emoji
+- OBLIGATOIRE : mentionne la spécialité "${deptInfo.specialite}"
+- OBLIGATOIRE : liste au moins 4 hard skills parmi : ${deptInfo.hardSkills.join(', ')}
+- OBLIGATOIRE : inclus une courte description du poste (2-3 lignes)
+- Invite à postuler via ce lien : ${recruitmentFormUrl}
+- Termine avec 5 hashtags pertinents (#Recrutement #Emploi + 3 liés au domaine)
+- Ton : professionnel, dynamique, moderne
+- NE PAS inclure de JSON, uniquement le texte du post
+
+Rédige UNIQUEMENT le texte du post LinkedIn, sans commentaire.`;
+
+    let linkedinPostText;
+    try {
+      const aiResponse = await echoAgent.generateAutoReply(prompt, {}, null);
+      linkedinPostText = aiResponse?.trim() || null;
+    } catch (aiErr) {
+      console.warn('⚠️ IA unavailable, fallback post:', aiErr.message);
+      linkedinPostText = null;
     }
-    
-    // ── 2.6. 📝 LOG ACTIVITY ────────────────
-    await ActivityLogger.logEchoActivity(
-      'STAFFING_ALERT',
-      `Processed staffing alert for ${department} department`,
-      {
-        targetAgent: 'hera',
-        description: `Created job posting for ${postes} position(s) in ${department}`,
-        status: 'success',
-        energyConsumed: energyResult.success ? energyResult.energyCost : 0,
-        priority: 'high',
-        metadata: {
-          department,
-          postes,
-          emailId,
-          jobOfferId: jobOffer._id,
-          linkedinPostId: publishResult.postId
-        }
-      }
-    );
+
+    // Fallback si l'IA échoue
+    if (!linkedinPostText) {
+      linkedinPostText = `🚨 Nous recrutons ! — Département ${department}\n\n` +
+        `Notre équipe ${department} est en pleine croissance et nous avons besoin de ${postes} nouveau(x) talent(s) pour renforcer nos rangs.\n\n` +
+        `✅ Ce que nous offrons :\n` +
+        `• Environnement innovant & IA-first\n` +
+        `• Équipe soudée et dynamique\n` +
+        `• Projets à fort impact\n\n` +
+        `📩 Postulez dès maintenant : ${recruitmentFormUrl}\n\n` +
+        `#Recrutement #Emploi #${department.replace(/\s/g, '')} #ETeam #Carrière`;
+    }
+
+    console.log('📝 [ECHO] Post LinkedIn généré :', linkedinPostText.substring(0, 80) + '...');
 
     // ── 3. ✅ RÉPONSE TECHNIQUE (Table: email_replies) ────────────────
     if (emailId) {
@@ -788,16 +792,16 @@ exports.resetMemoire = async (req, res) => {
 exports.publishToLinkedIn = async (req, res) => {
   try {
     const { content } = req.body;
-    
+
     if (!content) {
       return res.status(400).json({
         success: false,
         error: "Le champ 'content' est requis"
       });
     }
-    
+
     const result = await linkedinService.post(content);
-    
+
     res.json({
       success: true,
       result: result,
@@ -887,7 +891,7 @@ exports.sante = (req, res) => {
 exports.getProductLinkConfig = async (req, res) => {
   try {
     const productLink = process.env.ECHO_PRODUCT_LINK || null;
-    
+
     // Validate the current link
     let isValid = false;
     if (productLink && productLink.trim() !== '') {
@@ -898,7 +902,7 @@ exports.getProductLinkConfig = async (req, res) => {
         isValid = false;
       }
     }
-    
+
     res.json({
       success: true,
       data: {
@@ -926,14 +930,14 @@ exports.getProductLinkConfig = async (req, res) => {
 exports.updateProductLinkConfig = async (req, res) => {
   try {
     const { productLink } = req.body;
-    
+
     if (!productLink || typeof productLink !== 'string') {
       return res.status(400).json({
         success: false,
         error: 'Le champ productLink est requis et doit être une chaîne de caractères'
       });
     }
-    
+
     // Validate URL format
     try {
       const url = new URL(productLink.trim());
@@ -950,12 +954,12 @@ exports.updateProductLinkConfig = async (req, res) => {
         details: error.message
       });
     }
-    
+
     // Update environment variable (runtime only)
     process.env.ECHO_PRODUCT_LINK = productLink.trim();
-    
+
     console.log(`✅ [ECHO] Product link updated: ${productLink.trim()}`);
-    
+
     res.json({
       success: true,
       message: 'Product link mis à jour avec succès',
@@ -984,9 +988,9 @@ exports.deleteProductLinkConfig = async (req, res) => {
   try {
     // Clear environment variable
     process.env.ECHO_PRODUCT_LINK = '';
-    
+
     console.log('🗑️ [ECHO] Product link configuration cleared');
-    
+
     res.json({
       success: true,
       message: 'Product link configuration supprimée avec succès',
@@ -1018,7 +1022,7 @@ exports.deleteProductLinkConfig = async (req, res) => {
 exports.getMobileConfig = async (req, res) => {
   try {
     const productLink = process.env.ECHO_PRODUCT_LINK || null;
-    
+
     // Validate the current link
     let isValid = false;
     if (productLink && productLink.trim() !== '') {
@@ -1029,12 +1033,12 @@ exports.getMobileConfig = async (req, res) => {
         isValid = false;
       }
     }
-    
+
     // Get recent posts count
     const recentPostsCount = await SocialPost.countDocuments({
       createdAt: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } // Last 7 days
     });
-    
+
     // Get LinkedIn status
     let linkedinStatus = 'disconnected';
     try {
@@ -1043,7 +1047,7 @@ exports.getMobileConfig = async (req, res) => {
     } catch {
       linkedinStatus = 'error';
     }
-    
+
     res.json({
       success: true,
       data: {
@@ -1087,14 +1091,14 @@ exports.getMobileConfig = async (req, res) => {
 exports.updateMobileProductLink = async (req, res) => {
   try {
     const { productLink } = req.body;
-    
+
     if (!productLink || typeof productLink !== 'string') {
       return res.status(400).json({
         success: false,
         error: 'Product link is required'
       });
     }
-    
+
     // Validate URL format
     try {
       const url = new URL(productLink.trim());
@@ -1110,12 +1114,12 @@ exports.updateMobileProductLink = async (req, res) => {
         error: 'Invalid URL format'
       });
     }
-    
+
     // Update environment variable
     process.env.ECHO_PRODUCT_LINK = productLink.trim();
-    
+
     console.log(`✅ [ECHO MOBILE] Product link updated: ${productLink.trim()}`);
-    
+
     res.json({
       success: true,
       message: 'Product link updated successfully',
@@ -1143,22 +1147,22 @@ exports.getMobilePosts = async (req, res) => {
   try {
     const { page = 1, limit = 20, platform } = req.query;
     const skip = (parseInt(page) - 1) * parseInt(limit);
-    
+
     // Build query
     let query = {};
     if (platform && ['linkedin', 'mastodon'].includes(platform)) {
       query['platforms.name'] = platform;
     }
-    
+
     // Get posts with pagination
     const posts = await SocialPost.find(query)
       .sort({ createdAt: -1 })
       .skip(skip)
       .limit(parseInt(limit))
       .lean();
-    
+
     const totalPosts = await SocialPost.countDocuments(query);
-    
+
     // Format for mobile
     const mobilePosts = posts.map(post => ({
       id: post._id,
@@ -1182,7 +1186,7 @@ exports.getMobilePosts = async (req, res) => {
       isForced: post.metadata?.isForced || false,
       stats: post.stats || { likes: 0, shares: 0, comments: 0 }
     }));
-    
+
     res.json({
       success: true,
       data: {
@@ -1212,10 +1216,10 @@ exports.getMobilePosts = async (req, res) => {
 exports.mobileForcePost = async (req, res) => {
   try {
     const User = require('../models/User');
-    
+
     // Get userId from multiple possible sources
     let userId = req.user?.id || req.user?._id || req.userId;
-    
+
     // If no userId from auth, find ANY user with energy
     if (!userId) {
       console.log('⚠️ [DEBUG] No userId from authentication, finding user with energy');
@@ -1232,15 +1236,15 @@ exports.mobileForcePost = async (req, res) => {
         }
       }
     }
-    
+
     console.log(`🔍 [DEBUG] Full req.user object:`, JSON.stringify(req.user));
     console.log(`🔍 [DEBUG] Final userId to use:`, userId);
-    
+
     const { tick } = require('../services/echoLinkedInAutonomy');
-    
+
     // Force post generation
     await tick(true);
-    
+
     // ⚡ CONSUME ENERGY FOR SOCIAL_POST TASK
     const energyResult = await manualEnergyConsumption(
       'echo',
@@ -1249,15 +1253,15 @@ exports.mobileForcePost = async (req, res) => {
       { forced: true, endpoint: '/mobile/force-post' },
       userId // Pass userId
     );
-    
+
     console.log(`🔍 [DEBUG] Energy result:`, JSON.stringify(energyResult));
-    
+
     if (!energyResult.success) {
       console.log(`⚠️ [ENERGY] ${energyResult.error}`);
     } else {
       console.log(`⚡ [ENERGY] Echo consumed ${energyResult.energyCost} energy for SOCIAL_POST`);
     }
-    
+
     // 📝 LOG ACTIVITY
     await ActivityLogger.logEchoActivity(
       'SOCIAL_POST',
@@ -1275,7 +1279,7 @@ exports.mobileForcePost = async (req, res) => {
         }
       }
     );
-    
+
     res.json({
       success: true,
       message: 'Post generated and published successfully!',
@@ -1287,7 +1291,7 @@ exports.mobileForcePost = async (req, res) => {
     });
   } catch (error) {
     console.error('❌ Erreur mobileForcePost:', error);
-    
+
     // Log failed activity
     await ActivityLogger.logEchoActivity(
       'SOCIAL_POST',
@@ -1300,7 +1304,7 @@ exports.mobileForcePost = async (req, res) => {
         }
       }
     );
-    
+
     res.status(500).json({
       success: false,
       error: 'Failed to generate post',
@@ -1319,7 +1323,7 @@ exports.getMobileDashboard = async (req, res) => {
     const last24h = new Date(now.getTime() - 24 * 60 * 60 * 1000);
     const last7days = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
     const last30days = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-    
+
     // Get various stats
     const [
       totalPosts,
@@ -1340,7 +1344,7 @@ exports.getMobileDashboard = async (req, res) => {
       SocialPost.countDocuments({ 'platforms.name': 'mastodon' }),
       SocialPost.find().sort({ createdAt: -1 }).limit(5).lean()
     ]);
-    
+
     // Get product link status
     const productLink = process.env.ECHO_PRODUCT_LINK || null;
     let productLinkStatus = 'inactive';
@@ -1352,7 +1356,7 @@ exports.getMobileDashboard = async (req, res) => {
         productLinkStatus = 'invalid';
       }
     }
-    
+
     // Format recent posts for mobile
     const formattedRecentPosts = recentPosts.map(post => ({
       id: post._id,
@@ -1361,7 +1365,7 @@ exports.getMobileDashboard = async (req, res) => {
       createdAt: post.createdAt,
       hasProductLink: post.productLink?.isIncluded || false
     }));
-    
+
     res.json({
       success: true,
       data: {
@@ -1413,7 +1417,7 @@ exports.getPostsMetrics = async (req, res) => {
     const now = new Date();
     const last24h = new Date(now.getTime() - 24 * 60 * 60 * 1000);
     const last7days = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    
+
     // Get posts metrics
     const [
       totalPosts,
@@ -1437,19 +1441,19 @@ exports.getPostsMetrics = async (req, res) => {
         .limit(10)
         .lean()
     ]);
-    
+
     // Calculate engagement stats
     const allPosts = await SocialPost.find().lean();
     const totalLikes = allPosts.reduce((sum, post) => sum + (post.stats?.likes || 0), 0);
     const totalShares = allPosts.reduce((sum, post) => sum + (post.stats?.shares || 0), 0);
     const totalComments = allPosts.reduce((sum, post) => sum + (post.stats?.comments || 0), 0);
-    
+
     // Format recent activity for mobile
     const recentActivity = recentPosts.map(post => {
       const platforms = post.platforms || [];
       const linkedinPlatform = platforms.find(p => p.name === 'linkedin');
       const mastodonPlatform = platforms.find(p => p.name === 'mastodon');
-      
+
       return {
         id: post._id,
         title: post.content.substring(0, 50) + '...',
@@ -1470,7 +1474,7 @@ exports.getPostsMetrics = async (req, res) => {
         stats: post.stats || { likes: 0, shares: 0, comments: 0 }
       };
     });
-    
+
     res.json({
       success: true,
       data: {
@@ -1495,7 +1499,7 @@ exports.getPostsMetrics = async (req, res) => {
             color: '#FF9800' // Orange
           }
         },
-        
+
         // Operational metrics (for the cards below)
         operational: {
           postsPublished: {
@@ -1523,7 +1527,7 @@ exports.getPostsMetrics = async (req, res) => {
             color: '#4CAF50'
           }
         },
-        
+
         // Platform breakdown
         platforms: {
           linkedin: {
@@ -1539,10 +1543,10 @@ exports.getPostsMetrics = async (req, res) => {
             status: 'active'
           }
         },
-        
+
         // Recent activity (matching your UI format)
         recentActivity: recentActivity,
-        
+
         // Summary stats
         summary: {
           totalPosts,
@@ -1640,11 +1644,11 @@ exports.generateProductPost = async (req, res) => {
 
     let result;
     let totalEnergyCost = 0;
-    
+
     if (style && ['professional', 'casual', 'technical', 'emotional'].includes(style)) {
       // For styled posts, generate text only first, then add image
       const postText = await ProductMarketingGenerator.generateStyledPost(product, style);
-      
+
       // ⚡ CONSUME ENERGY FOR CONTENT_GENERATION
       const contentEnergyResult = await manualEnergyConsumption(
         'echo',
@@ -1653,15 +1657,15 @@ exports.generateProductPost = async (req, res) => {
         { productTitle: product.title, style },
         req.user?.id // Pass userId if available
       );
-      
+
       if (contentEnergyResult.success) {
         totalEnergyCost += contentEnergyResult.energyCost;
         console.log(`⚡ [ENERGY] Echo consumed ${contentEnergyResult.energyCost} energy for CONTENT_GENERATION`);
       }
-      
+
       // Now generate with image
       const fullResult = await ProductMarketingGenerator.generateMarketingPost(product, true);
-      
+
       // ⚡ CONSUME ENERGY FOR IMAGE_GENERATION
       if (fullResult.image) {
         const imageEnergyResult = await manualEnergyConsumption(
@@ -1671,13 +1675,13 @@ exports.generateProductPost = async (req, res) => {
           { productTitle: product.title, imageUrl: fullResult.image },
           req.user?.id // Pass userId if available
         );
-        
+
         if (imageEnergyResult.success) {
           totalEnergyCost += imageEnergyResult.energyCost;
           console.log(`⚡ [ENERGY] Echo consumed ${imageEnergyResult.energyCost} energy for IMAGE_GENERATION`);
         }
       }
-      
+
       result = {
         text: postText,
         image: fullResult.image
@@ -1685,7 +1689,7 @@ exports.generateProductPost = async (req, res) => {
     } else {
       // Generate post with AI image
       result = await ProductMarketingGenerator.generateMarketingPost(product, true);
-      
+
       // ⚡ CONSUME ENERGY FOR CONTENT_GENERATION
       const contentEnergyResult = await manualEnergyConsumption(
         'echo',
@@ -1694,12 +1698,12 @@ exports.generateProductPost = async (req, res) => {
         { productTitle: product.title },
         req.user?.id // Pass userId if available
       );
-      
+
       if (contentEnergyResult.success) {
         totalEnergyCost += contentEnergyResult.energyCost;
         console.log(`⚡ [ENERGY] Echo consumed ${contentEnergyResult.energyCost} energy for CONTENT_GENERATION`);
       }
-      
+
       // ⚡ CONSUME ENERGY FOR IMAGE_GENERATION
       if (result.image) {
         const imageEnergyResult = await manualEnergyConsumption(
@@ -1709,7 +1713,7 @@ exports.generateProductPost = async (req, res) => {
           { productTitle: product.title, imageUrl: result.image },
           req.user?.id // Pass userId if available
         );
-        
+
         if (imageEnergyResult.success) {
           totalEnergyCost += imageEnergyResult.energyCost;
           console.log(`⚡ [ENERGY] Echo consumed ${imageEnergyResult.energyCost} energy for IMAGE_GENERATION`);
@@ -1753,8 +1757,8 @@ exports.startProductCampaign = async (req, res) => {
     console.log(`🚀 [CAMPAIGN] Starting campaign for: ${productUrl}`);
 
     // Check if campaign already exists for this product
-    const existingCampaign = await ProductCampaign.findOne({ 
-      productUrl, 
+    const existingCampaign = await ProductCampaign.findOne({
+      productUrl,
       status: { $in: ['active', 'paused'] }
     });
 
@@ -1768,7 +1772,7 @@ exports.startProductCampaign = async (req, res) => {
 
     // Scrape product
     const scrapeResult = await ProductScraperService.scrapeProduct(productUrl);
-    
+
     if (!scrapeResult.success) {
       return res.status(500).json({
         success: false,

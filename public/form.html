@@ -221,39 +221,57 @@ e.preventDefault();
 submitBtn.disabled = true;
 submitBtn.textContent = 'Envoi en cours...';
 
-const formData = new FormData();
-formData.append('name', document.getElementById('name').value);
-formData.append('email', document.getElementById('email').value);
-formData.append('department', document.getElementById('department').value);
-formData.append('resume_text', document.getElementById('resume').value);
-
-// Ajout du fichier PDF
+const name = document.getElementById('name').value;
+const email = document.getElementById('email').value;
+const department = document.getElementById('department').value;
+const resume_text = document.getElementById('resume').value;
 const fileField = document.getElementById('cvFile');
-if (fileField.files[0]) {
-formData.append('resume_file', fileField.files[0]);
-}
-
-// Ajout job_offer_id depuis l'URL si présent
+const hasFile = fileField.files && fileField.files[0];
 const jobOfferId = urlParams.get('job_offer_id');
-if (jobOfferId) {
-formData.append('job_offer_id', jobOfferId);
+
+let fetchOptions;
+
+if (hasFile) {
+  // Avec fichier PDF → FormData (multipart)
+  const formData = new FormData();
+  formData.append('name', name);
+  formData.append('email', email);
+  formData.append('department', department);
+  formData.append('resume_text', resume_text);
+  formData.append('resume_file', fileField.files[0]);
+  if (jobOfferId) formData.append('job_offer_id', jobOfferId);
+  fetchOptions = { method: 'POST', body: formData };
+} else {
+  // Sans fichier → JSON (plus fiable)
+  const payload = { name, email, department, resume_text };
+  if (jobOfferId) payload.job_offer_id = jobOfferId;
+  fetchOptions = {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload)
+  };
 }
 
 try {
-const response = await fetch(API_URL, {
-method: 'POST',
-body: formData
-});
+const controller = new AbortController();
+const timeout = setTimeout(() => controller.abort(), 60000); // 60s timeout
+
+const response = await fetch(API_URL, { ...fetchOptions, signal: controller.signal });
+clearTimeout(timeout);
 
 const result = await response.json();
 if (result.success) {
-showMessage('success', `Candidature transmise avec succès ! Hera IA va analyser votre profil.`);
+showMessage('success', `✅ Candidature transmise ! Score IA : ${result.score || '—'}. Consultez votre email.`);
 form.reset();
 } else {
 showMessage('error', result.error || 'Une erreur est survenue.');
 }
 } catch (error) {
+if (error.name === 'AbortError') {
+showMessage('error', 'Délai dépassé (60s). Veuillez réessayer.');
+} else {
 showMessage('error', 'Erreur de connexion. Veuillez réessayer.');
+}
 } finally {
 submitBtn.disabled = false;
 submitBtn.textContent = 'Soumettre ma candidature';

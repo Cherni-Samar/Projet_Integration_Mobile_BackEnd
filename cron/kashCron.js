@@ -4,7 +4,11 @@ const Groq = require('groq-sdk');
 const User = require('../models/User');
 const Reminder = require('../models/Reminder');
 const Expense = require('../models/Expense');
+<<<<<<< HEAD
 
+=======
+const dexoService = require('../services/dexoService');
+>>>>>>> 640174d (fix: formulaire candidature + emails + ngrok cleanup)
 // ============================================================================
 // INITIALIZATION
 // ============================================================================
@@ -108,7 +112,13 @@ Return ONLY the HTML email body, no explanation, no markdown, no backticks.`;
           subject: `[Kash] Your Daily Financial Briefing — ${todayStr}`,
           html: emailHtml
         });
+<<<<<<< HEAD
 
+=======
+await dexoService.sendReport('daily', emailHtml, {
+  userEmail: user.email
+});
+>>>>>>> 640174d (fix: formulaire candidature + emails + ngrok cleanup)
         console.log(`[Kash Cron] Daily email sent to: ${user.email}`);
       } catch (error) {
         console.error(`[Kash Cron] Error processing user ${user._id}: ${error.message}`);
@@ -473,7 +483,19 @@ Return ONLY a valid JSON object with this exact structure, no explanation, no ma
           subject: `[Kash Weekly Report] Financial Summary — Week of ${startDateStr}`,
           html: emailHtml
         });
+<<<<<<< HEAD
 
+=======
+await dexoService.sendReport('weekly', emailHtml, {
+  userEmail: user.email,
+  startDate: startDateStr,
+  endDate: endDateStr,
+  totalSpent: groqData.totalSpent || totalExpenses,
+  budgetsAtRisk: groqData.budgetsAtRisk || budgetsAtRisk,
+  overduePayments: groqData.overduePayments || overduePayments,
+  aiSummary: groqData.aiSummary
+});
+>>>>>>> 640174d (fix: formulaire candidature + emails + ngrok cleanup)
         console.log(`[Kash Cron] Weekly email sent to: ${user.email}`);
       } catch (error) {
         console.error(`[Kash Cron] Error processing user ${user._id}: ${error.message}`);

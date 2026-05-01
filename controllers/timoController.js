@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 const Task = require('../models/Task');
 const HeraAction = require('../models/HeraAction');
 const InboxEmail = require('../models/InboxEmail');
@@ -131,3 +132,71 @@ exports.getTimoInbox = async (req, res) => {
 exports.confirmPlanning = async (req, res) => {
   res.json({ success: true, message: "Planning validé par Timo IA" });
 };
+=======
+// =============================================================
+//  CONTROLLER - Agent Timo (Planification / Scheduling)
+// =============================================================
+
+/**
+ * Calcule automatiquement le prochain créneau disponible pour un meeting.
+ * Utilisé par Héra pour planifier :
+ *   - Entretiens d'embauche (Interview)
+ *   - Sessions d'onboarding (Onboarding)
+ *   - Entretiens de départ (Départ)
+ *
+ * @param {string} employeeName - Nom de l'employé/candidat
+ * @param {string} meetingType  - Type : "Interview" | "Onboarding" | "Départ"
+ * @returns {Promise<{date: string, type: string, employee: string}>}
+ */
+async function autoPlanMeeting(employeeName, meetingType = "Interview") {
+  // Règles de planification par type
+  const rules = {
+    Interview: {
+      dayOfWeek: 3,   // Mercredi
+      hour: 10,
+      minute: 0,
+      label: "Entretien individuel",
+    },
+    Onboarding: {
+      dayOfWeek: 5,   // Vendredi
+      hour: 14,
+      minute: 0,
+      label: "Discovery Session (Onboarding)",
+    },
+    "Départ": {
+      dayOfWeek: 4,   // Jeudi
+      hour: 11,
+      minute: 0,
+      label: "Entretien de départ",
+    },
+  };
+
+  const rule = rules[meetingType] || rules.Interview;
+
+  // Calculer le prochain jour correspondant
+  const now = new Date();
+  const nextDate = new Date();
+  const daysUntil = (rule.dayOfWeek - now.getDay() + 7) % 7 || 7; // au moins 1 jour d'avance
+  nextDate.setDate(now.getDate() + daysUntil);
+  nextDate.setHours(rule.hour, rule.minute, 0, 0);
+
+  const formattedDate = nextDate.toLocaleDateString('fr-FR', {
+    weekday: 'long',
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  });
+
+  console.log(`📅 [TIMO] ${rule.label} planifié pour ${employeeName} le ${formattedDate}`);
+
+  return {
+    date: formattedDate,
+    type: meetingType,
+    employee: employeeName,
+  };
+}
+
+module.exports = { autoPlanMeeting };
+>>>>>>> 640174d (fix: formulaire candidature + emails + ngrok cleanup)

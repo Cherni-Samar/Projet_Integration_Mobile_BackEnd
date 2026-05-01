@@ -31,9 +31,17 @@ const predictionRoutes = require('./routes/predictionRoutes');
 const errorHandler = require('./middleware/errorHandler');
 const staffingWatcher = require('./services/staffingWatcher');
 const { startEchoSocialMediaAutonomy } = require('./services/echoLinkedInAutonomy');
+<<<<<<< HEAD
 const ProductCampaignScheduler = require('./services/productCampaignScheduler.service');
 const { startKashCron, triggerDailyEmailNow, triggerWeeklyEmailNow } = require('./cron/kashCron');
 require('./services/automatedBriefing');
+=======
+const {
+  getRecruitmentFormUrl,
+  recruitmentFormUrlForClientRequest,
+  isLocalhostUrl,
+} = require('./utils/recruitmentFormUrl');
+>>>>>>> 640174d (fix: formulaire candidature + emails + ngrok cleanup)
 
 // 1. Connexion MongoDB
 mongoose.connect(process.env.MONGODB_URI)
@@ -108,11 +116,22 @@ app.get('/api/kash/test-weekly', async (req, res) => {
 app.use((req, res) => res.status(404).json({ success: false, message: "Route non trouvée" }));
 app.use(errorHandler);
 
+<<<<<<< HEAD
 require('./services/automatedBriefing');
 
 // 5. Démarrage du serveur et des Watchers
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => {
+=======
+// 5. Démarrage du serveur
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, '0.0.0.0', async () => {
+  // ✅ Lancer le staffing watcher APRÈS que le serveur et MongoDB sont prêts
+  console.log('🕵️ Starting autonomous watchers...');
+  staffingWatcher.watchStaffing().catch(err => console.error('staffingWatcher initial:', err.message));
+
+  const recruitFormUrl = getRecruitmentFormUrl();
+>>>>>>> 640174d (fix: formulaire candidature + emails + ngrok cleanup)
   console.log(`
 🚀 Serveur lancé sur le port ${PORT}
 📍 URL: http://localhost:${PORT}

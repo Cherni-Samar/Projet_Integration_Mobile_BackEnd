@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 // =============================================================
 //  ROUTES EXPRESS - Agent Dexo (Administrative Document Agent)
 //  Gestion intelligente et sécurisée des documents avec n8n
@@ -1197,4 +1198,18 @@ router.get("/document-content/:documentId", async (req, res) => {
 
 // Document category management endpoints removed - upload functionality disabled
 
+=======
+const express = require('express');
+const router = express.Router();
+const dexo = require('../controllers/dexoController');
+const authMiddleware = require('../middleware/authMiddleware');
+router.get('/checkup', authMiddleware, dexo.getDailyCheckUp);
+router.get('/document-actions', authMiddleware, dexo.getDocumentActions);
+router.get('/opportunities', authMiddleware, dexo.getOpportunities);
+router.post('/approve-project', authMiddleware, dexo.approveProject);
+router.post('/strategic-advice', dexo.getStrategicAdvice);
+router.post('/save-vision', dexo.saveVision);
+router.get('/workforce-settings', authMiddleware, dexo.getWorkforceSettings);
+router.patch('/workforce-settings', authMiddleware, dexo.updateWorkforceSettings);
+>>>>>>> 640174d (fix: formulaire candidature + emails + ngrok cleanup)
 module.exports = router;
