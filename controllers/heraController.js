@@ -632,6 +632,189 @@ exports.getAgentInteractionStats = async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 };
+
+//routes pour les managers (création de demandes RH )
+exports.createHrRequest = async (req, res) => {
+  try {
+    const {
+      type,
+      department,
+      missing_count,
+      reason,
+      priority,
+      target_employee_id,
+      layoff_date,
+      impact
+    } = req.body;
+
+    let details = {
+      type,
+      department,
+      reason,
+      priority
+    };
+
+    // 🔥 CAS MANQUE DE RESSOURCES
+    if (type === 'staffing_shortage') {
+      details.missing_count = missing_count;
+      details.status = 'pending_analysis';
+    }
+    if (type === 'recruitment') {
+  details.role = req.body.role;
+  details.contract_type = req.body.contract_type;
+  details.headcount = req.body.headcount;
+  details.level = req.body.level;
+  details.skills = req.body.skills;
+  details.salary_budget = req.body.salary_budget;
+  details.status = 'pending_analysis';
+}
+
+    // 🔥 CAS LAYOFF
+    if (type === 'layoff') {
+      details.target_employee_id = target_employee_id;
+      details.layoff_date = layoff_date;
+      details.impact = impact;
+      details.status = 'scheduled';
+
+      // 🔥 récupérer employee ciblé
+      const targetEmployee = await Employee.findById(target_employee_id);
+
+      if (targetEmployee) {
+        await mailService.sendLayoffNoticeEmail(targetEmployee.email, {
+          employee_name: targetEmployee.name,
+          layoff_date
+        });
+      }
+    }
+
+    const action = await HeraAction.create({
+      ceo_id: req.ceo._id,
+      employee_id: req.employee._id,
+      action_type: 'hr_request',
+      triggered_by: 'manager',
+      details
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Demande RH enregistrée',
+      action
+    });
+
+  } catch (err) {
+    console.error('createHrRequest ERROR:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+};
+// Route pour que les managers voient leurs demandes RH
+exports.getHrRequests = async (req, res) => {
+  try {
+    const actions = await HeraAction.find({
+      ceo_id: req.ceo._id,
+      action_type: 'hr_request'
+    })
+    .sort({ createdAt: -1 });
+
+    res.json({ success: true, data: actions });
+  } catch (err) {
+    console.error('getHrRequests ERROR:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+};
+exports.getManagerDepartments = async (req, res) => {
+  try {
+    // 🔥 1. récupérer employee (manager)
+    const employee = await Employee.findById(req.params.employee_id);
+
+    if (!employee) {
+      return res.status(404).json({ error: 'Employee not found' });
+    }
+
+    // 🔥 2. récupérer CEO avec workforceSettings
+    const ceo = await User.findById(employee.ceo_id);
+
+    console.log('CEO FOUND:', ceo?.email);
+    console.log('WORKFORCE SETTINGS:', ceo?.workforceSettings);
+
+    const departments = (ceo?.workforceSettings || []).map(w => ({
+      department: w.department,
+      targetCount: w.targetCount,
+      currentCount: w.currentCount
+    }));
+
+    res.json({
+      success: true,
+      departments
+    });
+
+  } catch (err) {
+    console.error('getManagerDepartments ERROR:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+};
+
+exports.getManagerEmployees = async (req, res) => {
+  try {
+    const employees = await Employee.find({
+      ceo_id: req.ceo._id,
+      _id: { $ne: req.employee._id } // 🔥 EXCLURE LE MANAGER
+    })
+    .select('_id name department role')
+    .lean();
+
+    res.json({
+      success: true,
+      employees
+    });
+
+  } catch (err) {
+    console.error('getManagerEmployees ERROR:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+};
+exports.getManagerDashboard = async (req, res) => {
+  try {
+    const ceoId = req.ceo._id;
+
+    const teamSize = await Employee.countDocuments({
+      ceo_id: ceoId,
+      status: { $in: ['active', 'onboarding', 'offboarding'] }
+    });
+
+    const onLeave = await LeaveRequest.countDocuments({
+      status: 'approved',
+      start_date: { $lte: new Date() },
+      end_date: { $gte: new Date() }
+    });
+
+    const alerts = await HeraAction.countDocuments({
+      ceo_id: ceoId,
+      action_type: 'hr_request',
+      'details.status': { $in: ['pending_analysis', 'scheduled', 'pending_ceo_approval'] }
+    });
+
+    const recentActions = await HeraAction.find({
+      ceo_id: ceoId
+    })
+      .sort({ created_at: -1 })
+      .limit(5)
+      .lean();
+
+    res.json({
+      success: true,
+      data: {
+        teamSize,
+        onLeave,
+        alerts,
+        recentActions
+      }
+    });
+
+  } catch (err) {
+    console.error('getManagerDashboard ERROR:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+};
 exports.getAllActions = (req, res) => res.json({ success: true, actions: [] });
 exports.deleteAction = (req, res) => res.json({ success: true, message: "Supprimé" });
 exports.sendEmailToEcho = (req, res) => res.json({ success: true, message: "Envoyé" });

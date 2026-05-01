@@ -915,6 +915,52 @@ const sendHeraDocumentEmail = async (toEmail, docData) => {
   }
 };
 
+
+//email mtea layoff
+async function sendLayoffNoticeEmail(to, data) {
+  try {
+    const transporter = createTransporter(); // 🔥 IMPORTANT
+
+    const { employee_name, layoff_date } = data;
+
+    const subject = 'Suite à notre réunion – Information importante';
+
+    const text = `
+Bonjour ${employee_name},
+
+Suite à la réunion que nous avons tenue récemment, nous souhaitons vous informer officiellement de la décision prise concernant votre situation au sein de l’entreprise.
+
+Dans le cadre d’une réorganisation interne, une procédure de transition professionnelle sera mise en place.
+
+Date prévue de transition : ${layoff_date}
+
+Cette décision s’inscrit dans une démarche d’optimisation organisationnelle, et nous tenons à vous remercier sincèrement pour votre contribution et votre engagement.
+
+L’équipe RH reste à votre disposition pour vous accompagner dans cette étape et répondre à toutes vos questions.
+
+Cordialement,
+L’équipe RH
+`;
+
+    await transporter.sendMail({
+      from: `"Hera (RH)" <${process.env.EMAIL_USER}>`,
+      to,
+      subject,
+      text
+    });
+
+    console.log('📧 Mail layoff envoyé à:', to);
+
+    return true;
+
+  } catch (error) {
+    console.error('❌ Erreur mail layoff:', error);
+    return false;
+  }
+}
+
+
+
 // ✅ 2. Export global unique (Regroupe tout ici)
 module.exports = {
   sendVerificationEmail,
@@ -927,5 +973,6 @@ module.exports = {
   sendInterviewInvitation,
   sendOffboardingEmail,
   sendHeraConvocation,
-  sendHeraDocumentEmail // Ajouté ici
+  sendHeraDocumentEmail,
+  sendLayoffNoticeEmail// Ajouté ici
 };

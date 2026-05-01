@@ -33,6 +33,7 @@ const heraActionSchema = new mongoose.Schema({
       'contract_renewal',
       'contract_end',
       'doc_request',
+      'hr_request',
     ],
   },
 

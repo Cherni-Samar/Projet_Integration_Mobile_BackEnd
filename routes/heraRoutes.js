@@ -72,13 +72,20 @@ router.post(
 );// Dans routes/heraRoutes.js
 router.get('/admin/agent-interactions', hera.getAgentInteractions);
 router.get('/admin/agent-interactions/stats', hera.getAgentInteractionStats);
-
+//manager routes
+router.post('/hr-request',requireEmployeeAgentAccess('hera'),hera.createHrRequest);
+router.get('/hr-requests/:employee_id',requireEmployeeAgentAccess('hera'),hera.getHrRequests);
+router.get('/manager/departments/:employee_id',requireEmployeeAgentAccess('hera'),hera.getManagerDepartments);
+router.get('/manager/employees/:employee_id',requireEmployeeAgentAccess('hera'),hera.getManagerEmployees);
+router.get('/manager/dashboard/:employee_id',requireEmployeeAgentAccess('hera'),hera.getManagerDashboard);
+// Route pour déclencher le briefing vocal automatisé
 router.get('/admin/trigger-vocal', async (req, res) => {
   try {
     await vocalAuto.runAutomatedVocalBriefing();
     res.json({ success: true, message: "🚀 Briefing déclenché !" });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
+
 
 
 //testtt 
