@@ -1,7 +1,14 @@
+// services/productMarketingGenerator.service.js
 const { ChatGroq } = require('@langchain/groq');
 const imageGeneratorService = require('./imageGenerator.service');
 
 class ProductMarketingGenerator {
+  /**
+   * Generate marketing post for a product with AI-generated image
+   * @param {Object} product - Product information from scraper
+   * @param {boolean} generateImage - Whether to generate AI image
+   * @returns {Promise<Object>} Generated marketing post and image
+   */
   static async generateMarketingPost(product, generateImage = true) {
     if (!process.env.GROQ_API_KEY) {
       throw new Error('GROQ_API_KEY not configured');
@@ -23,10 +30,12 @@ class ProductMarketingGenerator {
         ? response.content.trim() 
         : String(response.content).trim();
 
+      // Remove quotes if present
       const cleanText = text.replace(/^["']|["']$/g, '');
 
       console.log(`✅ [MARKETING AI] Post generated successfully`);
 
+      // Generate AI image if requested and product has images
       let generatedImageUrl = null;
       if (generateImage && product.images && product.images.length > 0) {
         try {
@@ -52,6 +61,9 @@ class ProductMarketingGenerator {
     }
   }
 
+  /**
+   * Build marketing prompt for AI
+   */
   static _buildMarketingPrompt(product) {
     const productInfo = `
 PRODUCT INFORMATION:
@@ -98,6 +110,12 @@ STYLE:
 Génère maintenant le post LinkedIn parfait pour ce produit.`;
   }
 
+  /**
+   * Generate multiple post variations
+   * @param {Object} product - Product information
+   * @param {number} count - Number of variations to generate
+   * @returns {Promise<Array<string>>} Array of generated posts
+   */
   static async generateMultipleVariations(product, count = 3) {
     const posts = [];
     
@@ -106,6 +124,7 @@ Génère maintenant le post LinkedIn parfait pour ce produit.`;
         const post = await this.generateMarketingPost(product);
         posts.push(post);
         
+        // Small delay between requests
         await new Promise(resolve => setTimeout(resolve, 1000));
       } catch (error) {
         console.error(`❌ [MARKETING AI] Error generating variation ${i + 1}:`, error.message);
@@ -115,6 +134,12 @@ Génère maintenant le post LinkedIn parfait pour ce produit.`;
     return posts;
   }
 
+  /**
+   * Generate post with specific style
+   * @param {Object} product - Product information
+   * @param {string} style - Post style (professional, casual, technical, emotional)
+   * @returns {Promise<string>} Generated post
+   */
   static async generateStyledPost(product, style = 'professional') {
     const stylePrompts = {
       professional: 'Ton très professionnel et corporate',

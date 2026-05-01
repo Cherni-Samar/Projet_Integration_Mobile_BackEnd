@@ -1,5 +1,5 @@
-const bcrypt = require('bcryptjs');
-bcrypt.hash('azerty', 10).then(hash => {
-  console.log('Hash:', hash);
-  bcrypt.compare('azerty', hash).then(r => console.log('Match:', r));
-});
+﻿console.log('Test 1: Script started');
+require('dotenv').config();
+console.log('Test 2: Dotenv loaded');
+console.log('Test 3: MONGODB_URI =', process.env.MONGODB_URI ? 'Set' : 'Not set');
+console.log('Test 4: All good');

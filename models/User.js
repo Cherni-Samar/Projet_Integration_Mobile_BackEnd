@@ -32,7 +32,27 @@ const userSchema = new mongoose.Schema(
       enum: ['Marketing', 'Retail', 'Tech', 'Healthcare', 'Consulting', null],
       default: null
     },
+   // ✅ NOUVEAU : Vision stratégique de l'entreprise (Onboarding)
+    companyVision: {
+      type: String,
+      default: ""
+    },
 
+    // ✅ Vérifier si l'utilisateur a complété l'onboarding DEXO
+    onboardingCompleted: {
+      type: Boolean,
+      default: false
+    },
+
+    // ✅ NOUVEAU : Réglages des effectifs cibles (Vision du CEO)
+    // C'est ici que Dexo enregistre les chiffres du chat
+    workforceSettings: [
+      {
+        department: { type: String, required: true }, // 'Tech', 'Design', 'Marketing', etc.
+        targetCount: { type: Number, default: 0 },    // L'objectif du patron
+        currentCount: { type: Number, default: 0 }    // L'état réel (calculé par Hera)
+      }
+    ],
     // Système de Crédits (Usage Credits)
     credits: {
       type: Number,
@@ -60,7 +80,19 @@ const userSchema = new mongoose.Schema(
 
     energyBalance: {
       type: Number,
-      default: 0
+      default: 0,
+      min: 0
+    },
+
+    totalEnergyPurchased: {
+      type: Number,
+      default: 0,
+      min: 0
+    },
+
+    lastEnergyPurchase: {
+      type: Date,
+      default: null
     },
 
     // Budget Management for Kash Financial Agent

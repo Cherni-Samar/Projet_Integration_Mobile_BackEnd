@@ -1,11 +1,18 @@
+// services/productScraper.service.js
 const axios = require('axios');
 const cheerio = require('cheerio');
 
 class ProductScraperService {
+  /**
+   * Scrape product information from a URL
+   * @param {string} url - Product page URL
+   * @returns {Promise<Object>} Product information
+   */
   static async scrapeProduct(url) {
     try {
       console.log(`🔍 [PRODUCT SCRAPER] Scraping: ${url}`);
       
+      // Fetch the page
       const response = await axios.get(url, {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
@@ -16,6 +23,7 @@ class ProductScraperService {
       const html = response.data;
       const $ = cheerio.load(html);
 
+      // Extract product information
       const product = {
         url: url,
         title: this._extractTitle($),
@@ -44,7 +52,11 @@ class ProductScraperService {
     }
   }
 
+  /**
+   * Extract product title
+   */
   static _extractTitle($) {
+    // Try multiple selectors for title
     const selectors = [
       'h1',
       '[itemprop="name"]',
@@ -69,6 +81,9 @@ class ProductScraperService {
     return 'Product';
   }
 
+  /**
+   * Extract product description
+   */
   static _extractDescription($) {
     const selectors = [
       '[itemprop="description"]',
@@ -86,7 +101,7 @@ class ProductScraperService {
           ? element.attr('content') 
           : element.text().trim();
         if (text && text.length > 20) {
-          return text.substring(0, 500);
+          return text.substring(0, 500); // Limit to 500 chars
         }
       }
     }
@@ -94,6 +109,9 @@ class ProductScraperService {
     return '';
   }
 
+  /**
+   * Extract product price
+   */
   static _extractPrice($) {
     const selectors = [
       '[itemprop="price"]',
@@ -106,12 +124,16 @@ class ProductScraperService {
       const element = $(selector).first();
       if (element.length) {
         const text = element.text().trim();
+        // Extract price using regex - match price with currency symbol
         const priceMatch = text.match(/([\d,]+[.,]?\d*)\s*[€$£¥]/);
         if (priceMatch) {
+          // Return only the first occurrence of price with currency
           const price = priceMatch[0];
+          // Remove any duplicate prices (e.g., "10,90€10,90€" -> "10,90€")
           const uniquePrice = price.replace(/(.+?)(€|$|£|¥)\1\2/g, '$1$2');
           return uniquePrice;
         }
+        // Fallback: if no currency symbol, just extract first number
         const numberMatch = text.match(/[\d,]+\.?\d*/);
         if (numberMatch) {
           return numberMatch[0];
@@ -122,6 +144,9 @@ class ProductScraperService {
     return null;
   }
 
+  /**
+   * Extract product images
+   */
   static _extractImages($, baseUrl) {
     const images = [];
     const selectors = [
@@ -139,6 +164,7 @@ class ProductScraperService {
           : $(elem).attr('src') || $(elem).attr('data-src');
 
         if (imgUrl) {
+          // Convert relative URLs to absolute
           if (imgUrl.startsWith('//')) {
             imgUrl = 'https:' + imgUrl;
           } else if (imgUrl.startsWith('/')) {
@@ -148,18 +174,22 @@ class ProductScraperService {
             imgUrl = baseUrl + '/' + imgUrl;
           }
 
+          // Avoid duplicates and small images
           if (!images.includes(imgUrl) && !imgUrl.includes('icon') && !imgUrl.includes('logo')) {
             images.push(imgUrl);
           }
         }
       });
 
-      if (images.length >= 5) break;
+      if (images.length >= 5) break; // Limit to 5 images
     }
 
     return images;
   }
 
+  /**
+   * Extract product features
+   */
   static _extractFeatures($) {
     const features = [];
     const selectors = [
@@ -177,12 +207,15 @@ class ProductScraperService {
         }
       });
 
-      if (features.length >= 5) break;
+      if (features.length >= 5) break; // Limit to 5 features
     }
 
     return features;
   }
 
+  /**
+   * Extract product category
+   */
   static _extractCategory($) {
     const selectors = [
       '[itemprop="category"]',
@@ -206,6 +239,9 @@ class ProductScraperService {
     return null;
   }
 
+  /**
+   * Extract brand name
+   */
   static _extractBrand($) {
     const selectors = [
       '[itemprop="brand"]',
@@ -229,6 +265,11 @@ class ProductScraperService {
     return null;
   }
 
+  /**
+   * Download product image
+   * @param {string} imageUrl - Image URL to download
+   * @returns {Promise<Buffer>} Image buffer
+   */
   static async downloadImage(imageUrl) {
     try {
       const response = await axios.get(imageUrl, {

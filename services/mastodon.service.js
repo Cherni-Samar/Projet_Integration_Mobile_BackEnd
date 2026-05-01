@@ -54,7 +54,13 @@ class MastodonService {
     }
 
     try {
+      // Mastodon has a 500 character limit
       const statusText = message.length > 500 ? message.substring(0, 497) + '...' : message;
+      
+      console.log(`📝 [MASTODON] Post length: ${message.length} chars (limit: 500)`);
+      if (message.length > 500) {
+        console.log(`✂️  [MASTODON] Truncated to: ${statusText.length} chars`);
+      }
 
       // Upload image si fournie
       let mediaIds = [];

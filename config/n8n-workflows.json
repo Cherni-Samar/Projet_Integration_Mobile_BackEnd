@@ -1,0 +1,346 @@
+{
+  "workflows": {
+    "document-classified": {
+      "name": "Document Classification Workflow",
+      "description": "Triggered when a document is automatically classified by Dexo",
+      "webhook": "/webhook/document-classified",
+      "triggers": [
+        "document upload",
+        "classification complete"
+      ],
+      "actions": [
+        "Send notification to document owner",
+        "Update document database",
+        "Apply security policies",
+        "Create audit log entry"
+      ],
+      "example_payload": {
+        "agent": "dexo",
+        "workflow": "document-classified",
+        "data": {
+          "filename": "contract_2024.pdf",
+          "classification": {
+            "category": "contrats",
+            "confidentialityLevel": "confidentiel",
+            "priority": "high"
+          }
+        },
+        "timestamp": "2024-03-30T10:00:00Z"
+      }
+    },
+    
+    "document-searched": {
+      "name": "Document Search Analytics",
+      "description": "Triggered when intelligent search is performed",
+      "webhook": "/webhook/document-searched",
+      "triggers": [
+        "search query executed"
+      ],
+      "actions": [
+        "Log search analytics",
+        "Update search statistics",
+        "Improve search algorithms",
+        "Track user behavior"
+      ],
+      "example_payload": {
+        "agent": "dexo",
+        "workflow": "document-searched",
+        "data": {
+          "query": "contrats signés le mois dernier",
+          "userRole": "manager",
+          "resultsCount": 15
+        },
+        "timestamp": "2024-03-30T10:00:00Z"
+      }
+    },
+    
+    "security-alert": {
+      "name": "Security Alert Management",
+      "description": "Triggered when security issues are detected",
+      "webhook": "/webhook/security-alert",
+      "triggers": [
+        "unauthorized access attempt",
+        "suspicious activity",
+        "security policy violation"
+      ],
+      "actions": [
+        "Send immediate alert to security team",
+        "Block suspicious user if critical",
+        "Create incident report",
+        "Update security logs",
+        "Notify system administrators"
+      ],
+      "example_payload": {
+        "agent": "dexo",
+        "workflow": "security-alert",
+        "data": {
+          "alert": {
+            "alertLevel": "critical",
+            "alertType": "unauthorized_access",
+            "description": "Tentative d'accès non autorisé à un document confidentiel",
+            "user": "external.user@unknown.com",
+            "document": "financial_report_secret.xlsx"
+          }
+        },
+        "timestamp": "2024-03-30T10:00:00Z"
+      }
+    },
+    
+    "duplicate-detected": {
+      "name": "Duplicate Document Management",
+      "description": "Triggered when duplicate documents are detected",
+      "webhook": "/webhook/duplicate-detected",
+      "triggers": [
+        "duplicate document upload",
+        "similarity threshold exceeded"
+      ],
+      "actions": [
+        "Notify document owner",
+        "Suggest merge or version creation",
+        "Update duplicate tracking",
+        "Apply deduplication policies"
+      ],
+      "example_payload": {
+        "agent": "dexo",
+        "workflow": "duplicate-detected",
+        "data": {
+          "filename": "contract_copy.pdf",
+          "duplicateAnalysis": {
+            "isDuplicate": true,
+            "similarityScore": 0.95,
+            "recommendedAction": "create_version"
+          }
+        },
+        "timestamp": "2024-03-30T10:00:00Z"
+      }
+    },
+    
+    "version-created": {
+      "name": "Document Version Management",
+      "description": "Triggered when a new document version is created",
+      "webhook": "/webhook/version-created",
+      "triggers": [
+        "document version created",
+        "document updated"
+      ],
+      "actions": [
+        "Archive previous version",
+        "Update version history",
+        "Notify stakeholders",
+        "Update document index"
+      ],
+      "example_payload": {
+        "agent": "dexo",
+        "workflow": "version-created",
+        "data": {
+          "filename": "policy_document.pdf",
+          "versionId": "uuid-v4-string",
+          "versionMetadata": {
+            "version": 2,
+            "createdBy": "user@company.com",
+            "comment": "Updated security policies"
+          }
+        },
+        "timestamp": "2024-03-30T10:00:00Z"
+      }
+    },
+    
+    "documents-expired": {
+      "name": "Expired Documents Alert",
+      "description": "Triggered when documents have expired",
+      "webhook": "/webhook/documents-expired",
+      "triggers": [
+        "document expiration check",
+        "scheduled expiration scan"
+      ],
+      "actions": [
+        "Send expiration alerts",
+        "Mark documents as expired",
+        "Notify document owners",
+        "Trigger renewal process",
+        "Update compliance status"
+      ],
+      "example_payload": {
+        "agent": "dexo",
+        "workflow": "documents-expired",
+        "data": {
+          "expiredDocuments": [
+            {
+              "filename": "contract_2023.pdf",
+              "expirationDate": "2024-01-01",
+              "owner": "legal@company.com"
+            }
+          ],
+          "count": 1
+        },
+        "timestamp": "2024-03-30T10:00:00Z"
+      }
+    },
+    
+    "documents-expiring-soon": {
+      "name": "Documents Expiring Soon Alert",
+      "description": "Triggered when documents are about to expire",
+      "webhook": "/webhook/documents-expiring-soon",
+      "triggers": [
+        "expiration warning period reached",
+        "scheduled warning scan"
+      ],
+      "actions": [
+        "Send warning notifications",
+        "Schedule renewal reminders",
+        "Update expiration tracking",
+        "Notify responsible parties"
+      ],
+      "example_payload": {
+        "agent": "dexo",
+        "workflow": "documents-expiring-soon",
+        "data": {
+          "soonToExpire": [
+            {
+              "filename": "insurance_policy.pdf",
+              "expirationDate": "2024-04-15",
+              "daysRemaining": 15,
+              "owner": "admin@company.com"
+            }
+          ],
+          "count": 1
+        },
+        "timestamp": "2024-03-30T10:00:00Z"
+      }
+    },
+    
+    "document-generated": {
+      "name": "Document Generation Workflow",
+      "description": "Triggered when a document is automatically generated",
+      "webhook": "/webhook/document-generated",
+      "triggers": [
+        "document generation request",
+        "template processing complete"
+      ],
+      "actions": [
+        "Classify generated document",
+        "Apply security policies",
+        "Notify requestor",
+        "Store in appropriate location",
+        "Create audit trail"
+      ],
+      "example_payload": {
+        "agent": "dexo",
+        "workflow": "document-generated",
+        "data": {
+          "filename": "contract_service_2024-03-30.md",
+          "documentType": "contrat_service",
+          "classification": {
+            "category": "contrats",
+            "confidentialityLevel": "confidentiel"
+          }
+        },
+        "timestamp": "2024-03-30T10:00:00Z"
+      }
+    },
+    
+    "document-processed": {
+      "name": "Complete Document Processing",
+      "description": "Triggered when full document processing is complete",
+      "webhook": "/webhook/document-processed",
+      "triggers": [
+        "document upload and processing complete"
+      ],
+      "actions": [
+        "Send processing summary",
+        "Update document registry",
+        "Apply all recommendations",
+        "Notify relevant stakeholders",
+        "Complete audit logging"
+      ],
+      "example_payload": {
+        "agent": "dexo",
+        "workflow": "document-processed",
+        "data": {
+          "filename": "annual_report.pdf",
+          "classification": {
+            "category": "rapports",
+            "priority": "high"
+          },
+          "securityCheck": {
+            "alertLevel": "info"
+          },
+          "duplicateCheck": {
+            "isDuplicate": false
+          },
+          "recommendations": [
+            {
+              "type": "security",
+              "action": "restrict_access",
+              "priority": "high"
+            }
+          ]
+        },
+        "timestamp": "2024-03-30T10:00:00Z"
+      }
+    }
+  },
+  
+  "configuration": {
+    "n8n_base_url": "http://localhost:5678",
+    "webhook_base_path": "/webhook",
+    "authentication": {
+      "type": "api_key",
+      "header": "X-API-Key",
+      "value": "your-n8n-api-key"
+    },
+    "retry_policy": {
+      "max_retries": 3,
+      "retry_delay": 1000,
+      "exponential_backoff": true
+    },
+    "timeout": 30000
+  },
+  
+  "setup_instructions": {
+    "1": "Install n8n: npm install -g n8n",
+    "2": "Start n8n: n8n start",
+    "3": "Access n8n interface: http://localhost:5678",
+    "4": "Create workflows using the webhook URLs defined above",
+    "5": "Configure webhook nodes to receive data from Dexo agent",
+    "6": "Set up notification nodes (email, Slack, etc.) for alerts",
+    "7": "Configure database nodes to store workflow results",
+    "8": "Test workflows using the example payloads provided"
+  },
+  
+  "example_n8n_nodes": {
+    "webhook_receiver": {
+      "type": "Webhook",
+      "settings": {
+        "httpMethod": "POST",
+        "path": "document-classified",
+        "responseMode": "responseNode"
+      }
+    },
+    "email_notification": {
+      "type": "Email Send",
+      "settings": {
+        "fromEmail": "dexo@company.com",
+        "toEmail": "{{ $json.data.owner }}",
+        "subject": "Document Classified: {{ $json.data.filename }}",
+        "text": "Your document has been automatically classified as {{ $json.data.classification.category }}"
+      }
+    },
+    "database_update": {
+      "type": "MongoDB",
+      "settings": {
+        "operation": "update",
+        "collection": "documents",
+        "updateKey": "filename",
+        "upsert": true
+      }
+    },
+    "slack_alert": {
+      "type": "Slack",
+      "settings": {
+        "channel": "#security-alerts",
+        "text": "🚨 Security Alert: {{ $json.data.alert.description }}"
+      }
+    }
+  }
+}

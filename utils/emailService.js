@@ -114,7 +114,8 @@ const sendVerificationEmail = async (email, code) => {
     };
 
     const info = await transporter.sendMail(mailOptions);
-    console.log('✅ Email de vérification envoyé:', info.messageId);
+console.log('📧 Email envoyé à:', email);
+console.log('🆔 Message ID:', info.messageId);
     return true;
   } catch (error) {
     console.error('❌ Erreur envoi email:', error);

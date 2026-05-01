@@ -67,6 +67,7 @@ exports.signup = async (req, res, next) => {
           email: user.email,
           name: user.name,
           isEmailVerified: user.isEmailVerified,
+          onboardingCompleted: user.onboardingCompleted,
           subscriptionPlan: user.subscriptionPlan,
           maxAgentsAllowed: user.maxAgentsAllowed,
           activeAgents: user.activeAgents,
@@ -143,6 +144,7 @@ exports.verifyEmail = async (req, res, next) => {
           email: user.email,
           name: user.name,
           isEmailVerified: user.isEmailVerified,
+          onboardingCompleted: user.onboardingCompleted,
         }
       }
     });
@@ -235,6 +237,16 @@ exports.login = async (req, res, next) => {
       { expiresIn: process.env.JWT_EXPIRE }
     );
 
+    // Backward compatibility: old accounts may have onboarding data saved
+    // from before onboardingCompleted existed. Normalize it once at login.
+    const hasLegacyOnboardingData =
+      (typeof user.companyVision === 'string' && user.companyVision.trim().length > 0) ||
+      (Array.isArray(user.workforceSettings) && user.workforceSettings.length > 0);
+
+    if (!user.onboardingCompleted && hasLegacyOnboardingData) {
+      user.onboardingCompleted = true;
+    }
+
     user.lastLoginAt = new Date();
     await user.save();
 
@@ -247,6 +259,7 @@ exports.login = async (req, res, next) => {
           email: user.email,
           name: user.name,
           isEmailVerified: user.isEmailVerified,
+          onboardingCompleted: user.onboardingCompleted,
           lastLoginAt: user.lastLoginAt,
           subscriptionPlan: user.subscriptionPlan,
           maxAgentsAllowed: user.maxAgentsAllowed,
@@ -265,7 +278,7 @@ exports.login = async (req, res, next) => {
 // 5️⃣ GET ME
 exports.getMe = async (req, res) => {
   try {
-    const user = await User.findById(req.user.id);
+    const user = await User.findById(req.user.id).select('-password');
 
     if (!user) {
       return res.status(404).json({
@@ -281,12 +294,20 @@ exports.getMe = async (req, res) => {
           id: user._id,
           email: user.email,
           name: user.name,
+          onboardingCompleted: user.onboardingCompleted,
           isEmailVerified: user.isEmailVerified,
           subscriptionPlan: user.subscriptionPlan,
+          subscriptionStatus: user.subscriptionStatus,
           maxAgentsAllowed: user.maxAgentsAllowed,
           activeAgents: user.activeAgents,
           energyBalance: user.energyBalance,
+          credits: user.credits,
+
+          companyVision: user.companyVision,
+          workforceSettings: user.workforceSettings || [],
+
           createdAt: user.createdAt,
+          updatedAt: user.updatedAt,
           lastLoginAt: user.lastLoginAt
         }
       }
@@ -298,7 +319,6 @@ exports.getMe = async (req, res) => {
     });
   }
 };
-
 // 6️⃣ LOGOUT
 exports.logout = async (req, res) => {
   try {

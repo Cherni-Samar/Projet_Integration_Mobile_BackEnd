@@ -1,6 +1,8 @@
 const Task = require('../models/Task');
 const HeraAction = require('../models/HeraAction');
 const InboxEmail = require('../models/InboxEmail');
+const ActivityLogger = require('../services/activityLogger.service');
+const CentralizedEnergyService = require('../services/energy/centralizedEnergy.service');
 
 // ── A. FONCTION D'AUTOPLANIFICATION (Appelée par Hera) ──
 // controllers/timoController.js
@@ -49,6 +51,55 @@ exports.autoPlanMeeting = async (participantName, type) => {
         priority: 'high',
         userId: 'current_user'
     });
+    
+    // ⚡ CONSUME ENERGY FOR MEETING SCHEDULING - SECURED
+    let energyConsumed = 0;
+    try {
+      const energyResult = await CentralizedEnergyService.consumeForAutonomous({
+        agentName: 'timo',
+        taskType: 'MEETING_SCHEDULED',
+        taskDescription: `Scheduled ${type} meeting for ${participantName}`,
+        metadata: { 
+          participantName,
+          meetingType: type,
+          scheduledDate: suggestedDate,
+          taskId: finalTask._id,
+          source: 'timo_controller'
+        }
+      });
+      
+      if (energyResult.success) {
+        energyConsumed = energyResult.energyCost;
+        console.log(`⚡ [TIMO] Energy consumed successfully: ${energyResult.energyCost} from user ${energyResult.validatedUserId}`);
+      } else if (energyResult.blocked) {
+        console.warn(`⛔ TIMO energy blocked: ${energyResult.securityReason || energyResult.error}`);
+        // Continue with meeting scheduling even if energy is blocked
+        // This preserves existing behavior where scheduling continues regardless of energy
+      } else {
+        console.warn(`⚠️ [TIMO] Energy consumption failed: ${energyResult.error} - Continuing with meeting scheduling`);
+      }
+    } catch (err) {
+      console.warn('⚠️ [TIMO] Could not process energy consumption:', err.message);
+    }
+    
+    // 📝 LOG ACTIVITY
+    await ActivityLogger.logTimoActivity(
+        'MEETING_SCHEDULED',
+        `Scheduled ${type} meeting for ${participantName}`,
+        {
+            targetAgent: 'hera',
+            description: `Auto-planned meeting at ${suggestedDate.toLocaleString('fr-FR')}`,
+            status: 'success',
+            energyConsumed: energyConsumed,
+            priority: 'high',
+            metadata: {
+                participantName,
+                meetingType: type,
+                scheduledDate: suggestedDate,
+                taskId: finalTask._id
+            }
+        }
+    );
 
     return {
         date: suggestedDate.toLocaleString('fr-FR', { 

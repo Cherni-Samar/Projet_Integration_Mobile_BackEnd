@@ -6,13 +6,13 @@ const socialPostSchema = new mongoose.Schema({
     required: true
   },
   image: {
-    url: String,
+    url: String, // Local URL like /social-images/ai_generated_xxx.png
     type: {
       type: String,
       enum: ['ai-generated', 'original', 'none'],
       default: 'none'
     },
-    source: String
+    source: String // 'pollinations', 'huggingface', 'product', etc.
   },
   platforms: [{
     name: {
@@ -32,7 +32,7 @@ const socialPostSchema = new mongoose.Schema({
   }],
   productLink: {
     url: String,
-    position: Number,
+    position: Number, // Position in content where link was inserted
     isIncluded: {
       type: Boolean,
       default: false
@@ -73,10 +73,12 @@ const socialPostSchema = new mongoose.Schema({
   timestamps: true
 });
 
+// Index for efficient queries
 socialPostSchema.index({ createdAt: -1 });
 socialPostSchema.index({ 'platforms.name': 1 });
 socialPostSchema.index({ 'productLink.isIncluded': 1 });
 
+// Virtual for mobile-friendly response
 socialPostSchema.virtual('mobileFormat').get(function() {
   return {
     id: this._id,
@@ -101,6 +103,7 @@ socialPostSchema.virtual('mobileFormat').get(function() {
   };
 });
 
+// Method to log a new social post
 socialPostSchema.statics.logPost = async function(postData) {
   try {
     const post = new this(postData);
@@ -112,6 +115,7 @@ socialPostSchema.statics.logPost = async function(postData) {
   }
 };
 
+// Method to update platform status
 socialPostSchema.methods.updatePlatformStatus = async function(platformName, status, data = {}) {
   const platform = this.platforms.find(p => p.name === platformName);
   if (platform) {
