@@ -386,7 +386,7 @@ exports.receiveHeraStaffingAlert = async (req, res) => {
     const JobOffer = require('../models/JobOffer');
     const jobOffer = await JobOffer.create({
       document_type: 'opening',
-      title: `${titresAffichés} — ${postes} poste(s)`,
+      title: `${deptInfo.specialite} — ${postes} poste(s)`,
       department: department,
       description: jobDescription,
       status: 'open',
@@ -441,12 +441,23 @@ Rédige UNIQUEMENT le texte du post LinkedIn, sans commentaire.`;
 
     console.log('📝 [ECHO] Post LinkedIn généré :', linkedinPostText.substring(0, 80) + '...');
 
+    // ── 2. Publier sur LinkedIn ──────────────────────────────
+    let publishResult = { success: false, postId: null };
+    try {
+      publishResult = await linkedinService.post(linkedinPostText);
+      if (publishResult.success) {
+        console.log(`✅ [ECHO] Post LinkedIn publié ! ID : ${publishResult.postId}`);
+      }
+    } catch (pubErr) {
+      console.warn('⚠️ [ECHO] Publication LinkedIn échouée:', pubErr.message);
+    }
+
     // ── 3. ✅ RÉPONSE TECHNIQUE (Table: email_replies) ────────────────
     if (emailId) {
       try {
         const EmailReply = require('../models/EmailReply');
         await EmailReply.create({
-          emailId: emailId, // Liaison avec l'ID du mail de Hera
+          emailId: emailId,
           replyContent: `Bonjour Hera, j'ai traité ton alerte. L'offre pour ${department} est en ligne. ID LinkedIn: ${publishResult.postId || 'Simulé'}.`,
           sentBy: 'echo@e-team.com',
           status: 'sent',

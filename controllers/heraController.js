@@ -594,8 +594,10 @@ exports.processCandidacy = async (req, res) => {
       const individualMeet = `https://meet.jit.si/ETeam_Interview_${name.replace(/\s+/g, '_')}`;
       const date = await timo.autoPlanMeeting(name, "Interview");
 
-      await mailService.sendInterviewInvitation(email, {
+      await mailService.sendCandidacyInvitation(email, {
         name,
+        score,
+        interview_date: date?.date || 'À confirmer',
         meeting_link: individualMeet
       });
       await Candidate.create({ name, email, status: 'interview_scheduled', score_ia: score, resume_text, meeting_link: individualMeet });
