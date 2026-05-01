@@ -31,17 +31,9 @@ const predictionRoutes = require('./routes/predictionRoutes');
 const errorHandler = require('./middleware/errorHandler');
 const staffingWatcher = require('./services/staffingWatcher');
 const { startEchoSocialMediaAutonomy } = require('./services/echoLinkedInAutonomy');
-<<<<<<< HEAD
 const ProductCampaignScheduler = require('./services/productCampaignScheduler.service');
 const { startKashCron, triggerDailyEmailNow, triggerWeeklyEmailNow } = require('./cron/kashCron');
 require('./services/automatedBriefing');
-=======
-const {
-  getRecruitmentFormUrl,
-  recruitmentFormUrlForClientRequest,
-  isLocalhostUrl,
-} = require('./utils/recruitmentFormUrl');
->>>>>>> 640174d (fix: formulaire candidature + emails + ngrok cleanup)
 
 // 1. Connexion MongoDB
 mongoose.connect(process.env.MONGODB_URI)
