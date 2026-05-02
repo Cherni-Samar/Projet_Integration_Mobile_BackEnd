@@ -5,6 +5,8 @@ const authMiddleware = require('../middleware/authMiddleware');
 router.get('/checkup', authMiddleware, dexo.getDailyCheckUp);
 router.get('/document-actions', authMiddleware, dexo.getDocumentActions);
 router.get('/opportunities', authMiddleware, dexo.getOpportunities);
+router.get('/documents-by-category', authMiddleware, dexo.getDocumentsByCategory);
+router.get('/document-content/:id', authMiddleware, dexo.getDocumentContent);
 router.post('/approve-project', authMiddleware, dexo.approveProject);
 router.post('/strategic-advice', dexo.getStrategicAdvice);
 router.post('/save-vision', dexo.saveVision);

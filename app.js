@@ -33,6 +33,7 @@ const errorHandler = require('./middleware/errorHandler');
 const { startEchoSocialMediaAutonomy } = require('./services/echo/echoLinkedInAutonomy');
 const ProductCampaignScheduler = require('./services/echo/productCampaignScheduler.service');
 const { startKashCron, triggerDailyEmailNow, triggerWeeklyEmailNow } = require('./cron/kashCron');
+const emailProcessorCron = require('./cron/emailProcessorCron');
 require('./cron/automatedBriefing');
 
 // 1. Connexion MongoDB
@@ -123,6 +124,15 @@ app.listen(PORT, '0.0.0.0', () => {
   startKashCron();
   // Lancer le scheduler de campagnes produit
   ProductCampaignScheduler.startScheduler();
+
+  // ── CEO Email Intelligence System ──────────────────────────
+  // Real-time mode is intentionally disabled until gmailPushNotifications.js
+  // is available. Cron mode is the safe default.
+  if (process.env.GMAIL_REALTIME_ENABLED !== 'true') {
+    console.log('[Gmail] ⏰ Starting cron-based email processing (every 5 minutes)');
+    emailProcessorCron.start();
+  }
+  // ────────────────────────────────────────────────────────────
 });
 
 module.exports = app;
