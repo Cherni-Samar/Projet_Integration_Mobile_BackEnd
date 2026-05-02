@@ -486,9 +486,9 @@ const sendGroupMeetingInvitation = async (email, details) => {
 };
 const sendInterviewInvitation = async (email, details) => {
   try {
-    const transporter = createTransporter();
-    await transporter.sendMail({
-      from: `"E-Team RH" <${process.env.EMAIL_USER}>`,
+    console.log(`📧 [EMAIL] Envoi invitation entretien IA → ${email} (score: ${details.score})`);
+    const info = await sendEmail({
+      from: `"E-Team RH" <${process.env.EMAIL_USER || 'noreply@e-team.com'}>`,
       to: email,
       subject: '🤖 Invitation à votre entretien IA - E-Team',
       html: `
@@ -539,10 +539,7 @@ const sendInterviewInvitation = async (email, details) => {
               </ul>
             </div>
 
-            <p style="font-size: 14px; color: #666;">
-              Ce lien est personnel et unique. Ne le partagez pas.
-            </p>
-
+            <p style="font-size: 14px; color: #666;">Ce lien est personnel et unique. Ne le partagez pas.</p>
             <p style="margin-bottom: 0; font-size: 15px; color: #000;">À très bientôt,</p>
             <p style="margin-top: 5px; font-weight: bold; color: #A855F7;">Hera — Agent RH E-Team</p>
           </div>
@@ -556,9 +553,12 @@ const sendInterviewInvitation = async (email, details) => {
           </div>
         </div>`
     });
-    console.log(`📧 MAIL : Invitation Entretien IA (MODELAI) envoyée à ${email}`);
+    console.log(`✅ [EMAIL] Invitation entretien envoyée à ${email} — ID: ${info.messageId}`);
     return true;
-  } catch (e) { console.error('❌ Erreur sendInterviewInvitation:', e.message); return false; }
+  } catch (e) {
+    console.error(`❌ [EMAIL] Erreur sendInterviewInvitation → ${email} : ${e.message}`);
+    return false;
+  }
 };
 
 const sendOffboardingEmail = async (email, details) => {
