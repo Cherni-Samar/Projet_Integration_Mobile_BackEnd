@@ -557,25 +557,31 @@ exports.processCandidacy = async (req, res) => {
     console.log(`📊 [HERA] Score IA pour ${name} : ${score}`);
 
     // ── EMAIL 1 : Confirmation de réception (TOUJOURS envoyé) ──
-    await mailService.sendCandidacyConfirmation(email, name);
-    console.log(`📧 [HERA] Email 1 — Confirmation envoyée à ${email}`);
+    const confirmSent = await mailService.sendCandidacyConfirmation(email, name);
+    console.log(`📧 [HERA] Email 1 — Confirmation → ${email} : ${confirmSent ? '✅ ENVOYÉ' : '❌ ÉCHEC'}`);
 
     if (score >= 80) {
-      // ✅ LIEN INDIVIDUEL UNIQUE
-      const individualMeet = `https://meet.jit.si/ETeam_Interview_${name.replace(/\s+/g, '_')}`;
+      // ✅ LIEN ENTRETIEN IA — MODELAI (remplace Jitsi)
+      const modelaiBaseUrl = process.env.MODELAI_URL || process.env.INTERVIEW_URL || 'http://localhost:3001';
+      const interviewLink = `${modelaiBaseUrl}/index.html?name=${encodeURIComponent(name)}&department=${encodeURIComponent(department || 'General')}&role=${encodeURIComponent(req.body.job_role || 'Collaborateur')}&email=${encodeURIComponent(email)}&lang=fr`;
+
+      console.log(`🔗 [HERA] Lien MODELAI généré : ${interviewLink}`);
+
       const date = await timo.autoPlanMeeting(name, "Interview");
 
-      await mailService.sendCandidacyInvitation(email, {
+      const inviteSent = await mailService.sendInterviewInvitation(email, {
         name,
         score,
         interview_date: date?.date || 'À confirmer',
-        meeting_link: individualMeet
+        meeting_link: interviewLink
       });
-      await Candidate.create({ name, email, status: 'interview_scheduled', score_ia: score, resume_text, meeting_link: individualMeet });
+      console.log(`📧 [HERA] Email 2 — Invitation entretien IA → ${email} : ${inviteSent ? '✅ ENVOYÉ' : '❌ ÉCHEC'}`);
+
+      await Candidate.create({ name, email, status: 'interview_scheduled', score_ia: score, resume_text, meeting_link: interviewLink });
     } else {
       // Score < 80 : pas d'invitation, juste la confirmation (déjà envoyée)
       await Candidate.create({ name, email, department, resume_text, resume_url, status: 'applied', score_ia: score });
-      console.log(`📧 [HERA] Score ${score} < 80 — Pas d'invitation`);
+      console.log(`📧 [HERA] Score ${score} < 80 — Seul l'email de confirmation a été envoyé à ${email}`);
     }
 
     res.json({ success: true, score });
