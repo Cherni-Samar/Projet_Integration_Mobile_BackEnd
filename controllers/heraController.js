@@ -546,6 +546,8 @@ exports.processCandidacy = async (req, res) => {
     const resume_url = req.file ? req.file.path : null;
 
     console.log(`📩 [HERA] Candidature reçue : ${name} — ${email} — Dept: ${department || 'N/A'}`);
+    console.log(`📄 [HERA] Fichier PDF : ${req.file ? req.file.originalname : 'aucun'}`);
+    console.log(`📝 [HERA] Texte CV : ${resume_text ? resume_text.substring(0, 50) + '...' : 'vide'}`);
 
     // ── Validation ──
     if (!name || !email) {
@@ -558,7 +560,27 @@ exports.processCandidacy = async (req, res) => {
     // ── Traitement en arrière-plan (après la réponse) ──
     setImmediate(async () => {
       try {
-        const analysis = await heraAgent.analyzeCandidate(resume_text || '', department || 'Profil E-Team');
+        // ── Extraction texte du PDF si fourni ──
+        let finalResumeText = resume_text || '';
+        if (req.file && req.file.path) {
+          try {
+            const fs = require('fs');
+            const pdfParse = require('pdf-parse');
+            const pdfBuffer = fs.readFileSync(req.file.path);
+            const pdfData = await pdfParse(pdfBuffer);
+            const pdfText = pdfData.text?.trim() || '';
+            if (pdfText.length > 50) {
+              finalResumeText = pdfText + '\n' + finalResumeText;
+              console.log(`📄 [HERA] PDF extrait : ${pdfText.length} caractères`);
+            }
+          } catch (pdfErr) {
+            console.warn(`⚠️ [HERA] Impossible de lire le PDF : ${pdfErr.message}`);
+          }
+        }
+
+        console.log(`📝 [HERA] Texte final pour analyse (${finalResumeText.length} chars) : ${finalResumeText.substring(0, 100)}...`);
+
+        const analysis = await heraAgent.analyzeCandidate(finalResumeText || 'Candidat sans CV', department || 'Profil E-Team');
         const score = Number(analysis.score) || 0;
         console.log(`📊 [HERA] Score IA pour ${name} : ${score}`);
 
@@ -582,10 +604,10 @@ exports.processCandidacy = async (req, res) => {
           });
           console.log(`📧 [HERA] Email 2 — Invitation entretien IA → ${email} : ${inviteSent ? '✅ ENVOYÉ' : '❌ ÉCHEC'}`);
 
-          await Candidate.create({ name, email, status: 'interview_scheduled', score_ia: score, resume_text, meeting_link: interviewLink });
+          await Candidate.create({ name, email, status: 'interview_scheduled', score_ia: score, resume_text: finalResumeText, meeting_link: interviewLink });
         } else {
-          await Candidate.create({ name, email, department, resume_text, resume_url, status: 'applied', score_ia: score });
-          console.log(`📧 [HERA] Score ${score} < 80 — Seul l'email de confirmation a été envoyé à ${email}`);
+          await Candidate.create({ name, email, department, resume_text: finalResumeText, resume_url, status: 'applied', score_ia: score });
+          console.log(`📧 [HERA] Score ${score} < 80 — Seul l'email de confirmation envoyé à ${email}`);
         }
       } catch (bgErr) {
         console.error('❌ [HERA] Erreur traitement arrière-plan:', bgErr.message);
@@ -594,7 +616,6 @@ exports.processCandidacy = async (req, res) => {
 
   } catch (err) {
     console.error('❌ [HERA] Erreur processCandidacy:', err.message);
-    // Répondre seulement si pas encore répondu
     if (!res.headersSent) {
       res.status(500).json({ error: err.message });
     }
