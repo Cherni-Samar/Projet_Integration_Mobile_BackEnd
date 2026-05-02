@@ -4,7 +4,7 @@ const Groq = require('groq-sdk');
 const User = require('../models/User');
 const Reminder = require('../models/Reminder');
 const Expense = require('../models/Expense');
-const dexoService = require('../services/dexoService');
+const dexoService = require('../services/dexo/dexoService');
 // ============================================================================
 // INITIALIZATION
 // ============================================================================

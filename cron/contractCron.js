@@ -2,7 +2,7 @@ const cron = require('node-cron');
 const Employee = require('../models/Employee');
 const LeaveRequest = require('../models/LeaveRequest');
 const HeraAction = require('../models/HeraAction');
-const n8n = require('./hera/n8n.service');
+const n8n = require('../services/hera/n8n.service');
 const mailService = require('../utils/emailService');
 
 // ── Utilitaire : donne la plage de dates pour J+X ─────────────────────────

@@ -52,7 +52,7 @@ router.post('/linkedin/post', authMiddleware, agentGuardMiddleware('echo'), asyn
     }
 
     try {
-        const linkedinService = require('../services/linkedin.service');
+        const linkedinService = require('../services/echo/linkedin.service');
         const result = await linkedinService.post(content);
         res.json(result);
     } catch (error) {
@@ -66,7 +66,7 @@ router.post('/linkedin/recruitment', authMiddleware, agentGuardMiddleware('echo'
 // Obtenir le statut du token LinkedIn
 router.get('/linkedin/status', async (req, res) => {
     try {
-        const linkedinService = require('../services/linkedin.service');
+        const linkedinService = require('../services/echo/linkedin.service');
         const hasToken = !!linkedinService.accessToken;
         res.json({
             success: true,

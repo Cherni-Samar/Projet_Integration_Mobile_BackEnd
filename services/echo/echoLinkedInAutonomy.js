@@ -4,10 +4,10 @@ const path = require('path');
 const cron = require('node-cron');
 const { ChatGroq } = require('@langchain/groq');
 const linkedinService = require('./linkedin.service');
-const SocialPost = require('../models/SocialPost');
-const ActivityLogger = require('./activityLogger.service');
+const SocialPost = require('../../models/SocialPost');
+const ActivityLogger = require('../shared/activityLogger.service');
 
-const stateFile = path.join(__dirname, '../.echo_social_media_autonomy.json');
+const stateFile = path.join(__dirname, '../../.echo_social_media_autonomy.json');
 
 function loadState() {
   try {
@@ -131,7 +131,7 @@ async function tick(force = false) {
   if (process.env.ECHO_SOCIAL_MEDIA_AUTONOMY_ENABLED !== 'true') return;
 
   // ✅ ECHO AGENT OWNERSHIP CHECK - Critical Security
-  const { findUserWithAgentAndEnergy } = require('../utils/agentGuard');
+  const { findUserWithAgentAndEnergy } = require('../../utils/agentGuard');
   const userCheck = await findUserWithAgentAndEnergy('echo');
   
   if (!userCheck.hasAgent || !userCheck.userId) {
@@ -170,8 +170,8 @@ async function tick(force = false) {
   }
 
   // ⚡ CONSUME ENERGY FOR CONTENT_GENERATION
-  const { manualEnergyConsumption } = require('../middleware/energyMiddleware');
-  const User = require('../models/User');
+  const { manualEnergyConsumption } = require('../../middleware/energyMiddleware');
+  const User = require('../../models/User');
   let totalEnergyCost = 0;
   
   const contentEnergyResult = await manualEnergyConsumption(

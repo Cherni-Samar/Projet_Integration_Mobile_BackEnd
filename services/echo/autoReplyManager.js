@@ -1,6 +1,5 @@
 const mongoose = require('mongoose');
-const emailSender = require('./emailSender');
-const echoService = require('./echoService');
+const emailSender = require('../shared/emailSender');
 const inboxStatsService = require('./inboxStatsService');
 
 class AutoReplyManager {

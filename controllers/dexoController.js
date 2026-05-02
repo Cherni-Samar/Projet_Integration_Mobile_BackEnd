@@ -1,10 +1,10 @@
 // controllers/dexoController.js
-const dexoService = require('../services/dexoService');
+const dexoService = require('../services/dexo/dexoService');
 const briefingService = require('../services/dexo/briefing.service');
 const HeraAction = require('../models/HeraAction');
 const ProjectOpportunity = require('../models/ProjectOpportunity');
 const User = require('../models/User');
-const { triggerStaffingForUser } = require('../services/staffingEventService');
+const { triggerStaffingForUser } = require('../services/hera/staffingEventService');
 
 // ── Document Factory ──────────────────────────────────────────────────────────
 

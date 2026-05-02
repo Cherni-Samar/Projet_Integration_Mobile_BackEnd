@@ -1,6 +1,6 @@
-const InboxEmail = require('../models/InboxEmail');
-const EmailReply = require('../models/EmailReply');
-const MessageStats = require('../models/MessageStats');
+const InboxEmail = require('../../models/InboxEmail');
+const EmailReply = require('../../models/EmailReply');
+const MessageStats = require('../../models/MessageStats');
 
 /**
  * Totaux fiables après redémarrage : source = collections, pas la mémoire.

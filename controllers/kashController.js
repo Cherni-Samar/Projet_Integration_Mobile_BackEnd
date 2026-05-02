@@ -6,7 +6,7 @@ const Budget = require('../models/Budget');
 const axios = require('axios');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const Groq = require('groq-sdk');
-const emailSender = require('../services/emailSender');
+const emailSender = require('../services/shared/emailSender');
 const financeService = require('../services/kash/finance.service');
 
 const ENERGY_COST_ADD_EXPENSE = 5;

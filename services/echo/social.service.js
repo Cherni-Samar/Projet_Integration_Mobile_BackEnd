@@ -19,7 +19,7 @@
 //   - Staffing alerts (staffing.service.js)
 
 const SocialPost = require('../../models/SocialPost');
-const linkedinService = require('../linkedin.service');
+const linkedinService = require('./linkedin.service');
 
 // ─── Private helper ───────────────────────────────────────────────────────────
 

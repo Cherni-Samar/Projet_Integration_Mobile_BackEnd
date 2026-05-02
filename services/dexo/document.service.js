@@ -23,7 +23,7 @@ const fs = require('fs');
 const Employee = require('../../models/Employee');
 const Document = require('../../models/Document');
 const HeraAction = require('../../models/HeraAction');
-const pdfGenerator = require('../pdfGenerator');
+const pdfGenerator = require('./pdfGenerator');
 const mailService = require('../../utils/emailService');
 
 /**

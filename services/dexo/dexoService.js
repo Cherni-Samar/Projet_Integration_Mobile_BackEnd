@@ -1,9 +1,9 @@
 // services/dexoService.js
-const heraAgent = require('./hera.agent');
-const ProjectOpportunity = require('../models/ProjectOpportunity');
-const CentralizedEnergyService = require('./energy/centralizedEnergy.service');
-const reportService = require('./dexo/report.service');
-const documentService = require('./dexo/document.service');
+const heraAgent = require('../hera/hera.agent');
+const ProjectOpportunity = require('../../models/ProjectOpportunity');
+const CentralizedEnergyService = require('../energy/centralizedEnergy.service');
+const reportService = require('./report.service');
+const documentService = require('./document.service');
 class DexoService {
   
   // --- STRATÉGIE & ONBOARDING DYNAMIQUE ---

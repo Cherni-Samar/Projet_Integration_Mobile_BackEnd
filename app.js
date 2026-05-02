@@ -30,10 +30,10 @@ const activityRoutes = require('./routes/activityRoutes');
 const dexoRoutes = require('./routes/dexoRoutes');
 
 const errorHandler = require('./middleware/errorHandler');
-const { startEchoSocialMediaAutonomy } = require('./services/echoLinkedInAutonomy');
-const ProductCampaignScheduler = require('./services/productCampaignScheduler.service');
+const { startEchoSocialMediaAutonomy } = require('./services/echo/echoLinkedInAutonomy');
+const ProductCampaignScheduler = require('./services/echo/productCampaignScheduler.service');
 const { startKashCron, triggerDailyEmailNow, triggerWeeklyEmailNow } = require('./cron/kashCron');
-require('./services/automatedBriefing');
+require('./cron/automatedBriefing');
 
 // 1. Connexion MongoDB
 mongoose.connect(process.env.MONGODB_URI)

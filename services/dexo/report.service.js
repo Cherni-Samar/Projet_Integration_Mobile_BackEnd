@@ -15,7 +15,7 @@
 
 const TelegramBot = require('node-telegram-bot-api');
 const HeraAction = require('../../models/HeraAction');
-const heraAgent = require('../hera.agent');
+const heraAgent = require('../hera/hera.agent');
 
 // ─── Telegram bot singleton ───────────────────────────────────────────────────
 const telegramToken = process.env.TELEGRAM_BOT_TOKEN;

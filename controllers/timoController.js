@@ -1,7 +1,7 @@
 const Task = require('../models/Task');
 const HeraAction = require('../models/HeraAction');
 const InboxEmail = require('../models/InboxEmail');
-const ActivityLogger = require('../services/activityLogger.service');
+const ActivityLogger = require('../services/shared/activityLogger.service');
 const CentralizedEnergyService = require('../services/energy/centralizedEnergy.service');
 
 // ── A. FONCTION D'AUTOPLANIFICATION (Appelée par Hera) ──

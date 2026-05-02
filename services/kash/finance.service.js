@@ -6,7 +6,7 @@ const Budget = require('../../models/Budget');
 const axios = require('axios');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const Groq = require('groq-sdk');
-const emailSender = require('../emailSender');
+const emailSender = require('../shared/emailSender');
 
 /**
  * Finance Service - Centralized business logic for Kash financial operations

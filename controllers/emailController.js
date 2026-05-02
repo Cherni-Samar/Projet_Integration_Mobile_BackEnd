@@ -1,8 +1,7 @@
 const mongoose = require("mongoose");
-const echoService = require("../services/echoService");
-const autoReplyManager = require("../services/autoReplyManager");
+const autoReplyManager = require("../services/echo/autoReplyManager");
 const InboxEmail = require("../models/InboxEmail");
-const inboxStatsService = require("../services/inboxStatsService");
+const inboxStatsService = require("../services/echo/inboxStatsService");
 const { emailToClient } = require("../utils/emailSerialize");
 
 // 🔹 helper

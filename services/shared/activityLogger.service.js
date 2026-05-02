@@ -2,7 +2,7 @@
 //  SERVICE - Activity Logger (Centralized Agent Activity Tracking)
 // =============================================================
 
-const ActivityLog = require('../models/ActivityLog');
+const ActivityLog = require('../../models/ActivityLog');
 
 class ActivityLoggerService {
   

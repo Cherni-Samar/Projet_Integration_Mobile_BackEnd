@@ -2,7 +2,7 @@
 //  CONTROLLER - Activity Log
 // =============================================================
 
-const ActivityLogger = require('../services/activityLogger.service');
+const ActivityLogger = require('../services/shared/activityLogger.service');
 const ActivityLog = require('../models/ActivityLog');
 
 /**

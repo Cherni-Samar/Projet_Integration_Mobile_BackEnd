@@ -1,9 +1,9 @@
-const Employee = require('../models/Employee');
-const HeraAction = require('../models/HeraAction');
-const InboxEmail = require('../models/InboxEmail');
-const User = require('../models/User');
-const mailService = require('../utils/emailService');
-const ActivityLog = require('../models/ActivityLog');
+const Employee = require('../../models/Employee');
+const HeraAction = require('../../models/HeraAction');
+const InboxEmail = require('../../models/InboxEmail');
+const User = require('../../models/User');
+const mailService = require('../../utils/emailService');
+const ActivityLog = require('../../models/ActivityLog');
 
 const triggerStaffingForUser = async (userId) => {
   console.log(`🧠 [HERA EVENT] Analyse staffing globale pour user ${userId}`);

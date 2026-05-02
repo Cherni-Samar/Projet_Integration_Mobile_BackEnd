@@ -21,9 +21,9 @@
 const JobOffer = require('../../models/JobOffer');
 const InboxEmail = require('../../models/InboxEmail');
 const EmailReply = require('../../models/EmailReply');
-const linkedinService = require('../linkedin.service');
+const linkedinService = require('./linkedin.service');
 const { manualEnergyConsumption } = require('../../middleware/energyMiddleware');
-const ActivityLogger = require('../activityLogger.service');
+const ActivityLogger = require('../shared/activityLogger.service');
 
 // ─── Department skills map ────────────────────────────────────────────────────
 // Defines the speciality label and required hard skills for each department.

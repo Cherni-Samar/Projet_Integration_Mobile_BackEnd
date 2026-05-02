@@ -4,14 +4,14 @@ const multer = require('multer');
 const hera    = require('../controllers/heraController');
 const dexo    = require('../controllers/dexoController'); 
 const timo    = require('../controllers/timoController');
-const vocalAuto = require('../services/automatedBriefing');
+const vocalAuto = require('../cron/automatedBriefing');
 const authMiddleware = require('../middleware/authMiddleware');
 const {
   requireAgentAccess,
   requireEmployeeAgentAccess,
 } = require('../middleware/agentGuard');
 const upload = multer({ dest: 'uploads/cv/' });
-const { triggerStaffingForUser } = require('../services/staffingEventService');
+const { triggerStaffingForUser } = require('../services/hera/staffingEventService');
 // --- ROUTES EMPLOYÉ ---
 router.post(
   '/leave-request',

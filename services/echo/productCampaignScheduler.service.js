@@ -1,12 +1,12 @@
 // services/productCampaignScheduler.service.js
 const cron = require('node-cron');
-const ProductCampaign = require('../models/ProductCampaign');
+const ProductCampaign = require('../../models/ProductCampaign');
 const ProductMarketingGenerator = require('./productMarketingGenerator.service');
 const linkedinService = require('./linkedin.service');
-const SocialPost = require('../models/SocialPost');
-const ActivityLogger = require('./activityLogger.service');
-const { manualEnergyConsumption } = require('../middleware/energyMiddleware');
-const User = require('../models/User');
+const SocialPost = require('../../models/SocialPost');
+const ActivityLogger = require('../shared/activityLogger.service');
+const { manualEnergyConsumption } = require('../../middleware/energyMiddleware');
+const User = require('../../models/User');
 const fs = require('fs').promises;
 const path = require('path');
 
@@ -19,7 +19,7 @@ class ProductCampaignScheduler {
       console.log('🔍 [CAMPAIGN] Checking for campaigns ready to post...');
       
       // ✅ ECHO AGENT OWNERSHIP CHECK - Critical Security
-      const { findUserWithAgentAndEnergy } = require('../utils/agentGuard');
+      const { findUserWithAgentAndEnergy } = require('../../utils/agentGuard');
       const userCheck = await findUserWithAgentAndEnergy('echo');
       
       if (!userCheck.hasAgent || !userCheck.userId) {
@@ -61,7 +61,7 @@ class ProductCampaignScheduler {
       // Use verified user ID or find user with Echo agent and energy
       let userId = verifiedUserId;
       if (!userId) {
-        const { findUserWithAgentAndEnergy } = require('../utils/agentGuard');
+        const { findUserWithAgentAndEnergy } = require('../../utils/agentGuard');
         const userCheck = await findUserWithAgentAndEnergy('echo');
         
         if (!userCheck.hasAgent || !userCheck.userId) {
@@ -137,7 +137,7 @@ class ProductCampaignScheduler {
           if (imageUrl.startsWith('/social-images/')) {
             // Read from filesystem
             console.log(`📂 [CAMPAIGN] Reading image from filesystem: ${imageUrl}`);
-            const absolutePath = path.join(__dirname, '../public', imageUrl);
+            const absolutePath = path.join(__dirname, '../../public', imageUrl);
             imageBuffer = await fs.readFile(absolutePath);
             console.log(`✅ [CAMPAIGN] Image read from filesystem (${imageBuffer.length} bytes)`);
           } else {

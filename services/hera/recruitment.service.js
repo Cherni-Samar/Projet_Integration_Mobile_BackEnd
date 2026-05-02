@@ -8,7 +8,7 @@ const JobOffer = require('../../models/JobOffer');
 const Task = require('../../models/Task');
 const mongoose = require('mongoose');
 const mailService = require('../../utils/emailService');
-const heraAgent = require('../hera.agent');
+const heraAgent = require('./hera.agent');
 const timo = require('../../controllers/timoController');
 
 class RecruitmentService {
