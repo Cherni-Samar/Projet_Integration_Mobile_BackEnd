@@ -364,8 +364,24 @@ const sendStaffingAlert = async (targetEmail, details) => {
 // 1. Pour confirmer la réception simple
 const sendCandidacyConfirmation = async (email, name) => {
   try {
+    // ── Vérification variables SMTP avant envoi ──
+    if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+      console.error('❌ [EMAIL] EMAIL_USER ou EMAIL_PASS manquant dans les variables d\'environnement !');
+      console.error('❌ [EMAIL] Sur Render : va dans Settings → Environment → ajoute EMAIL_USER et EMAIL_PASS');
+      return false;
+    }
+
+    console.log(`📧 [EMAIL] Tentative envoi confirmation à : ${email}`);
+    console.log(`📧 [EMAIL] Depuis : ${process.env.EMAIL_USER}`);
+    console.log(`📧 [EMAIL] SMTP : ${process.env.EMAIL_HOST}:${process.env.EMAIL_PORT}`);
+
     const transporter = createTransporter();
-    await transporter.sendMail({
+
+    // Vérifier la connexion SMTP avant d'envoyer
+    await transporter.verify();
+    console.log('📧 [EMAIL] Connexion SMTP OK');
+
+    const info = await transporter.sendMail({
       from: `"E-Team RH" <${process.env.EMAIL_USER}>`,
       to: email,
       subject: '📩 Confirmation de réception : Votre candidature chez E-Team',
@@ -406,10 +422,13 @@ const sendCandidacyConfirmation = async (email, name) => {
         </div>
       `
     });
-    console.log(`📧 MAIL : Confirmation de réception (Humaine) envoyée à ${email}`);
+    console.log(`✅ [EMAIL] Confirmation envoyée à ${email} — MessageID: ${info.messageId}`);
     return true;
   } catch (e) { 
-    console.error("❌ ERREUR NODEMAILER (Confirmation):", e.message);
+    console.error(`❌ [EMAIL] ERREUR envoi confirmation à ${email}:`);
+    console.error(`❌ [EMAIL] Message : ${e.message}`);
+    console.error(`❌ [EMAIL] Code    : ${e.code}`);
+    console.error(`❌ [EMAIL] Response: ${e.response}`);
     return false; 
   }
 };

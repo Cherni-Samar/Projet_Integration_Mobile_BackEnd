@@ -8,8 +8,24 @@ const mongoose = require('mongoose');
 const app = express();
 
 // 2. Middlewares (CORS & Body Parsers)
+const allowedOrigins = [
+  'http://localhost:4200',
+  'http://localhost:3000',
+  'http://localhost:3001',
+  'https://projet-integration-mobile-backend.onrender.com',
+  process.env.FRONTEND_URL,
+  process.env.PUBLIC_BASE_URL,
+].filter(Boolean);
+
 app.use(cors({
-  origin: 'http://localhost:4200',
+  origin: function (origin, callback) {
+    // Autoriser les requêtes sans origin (Postman, curl, formulaires HTML directs)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    // En développement, tout autoriser
+    if (process.env.NODE_ENV !== 'production') return callback(null, true);
+    callback(new Error('CORS bloqué : ' + origin));
+  },
   credentials: true
 }));
 app.use(express.json({ limit: '10mb' }));
@@ -77,6 +93,109 @@ app.get('/dashboard', (req, res) => res.sendFile(dashboardHtmlPath));
 // 3. Routes API
 app.get('/', (req, res) => res.json({ status: 'running', service: 'Hera Assistant API' }));
 app.get('/health', (req, res) => res.json({ status: 'OK', db: mongoose.connection.readyState === 1 }));
+
+// ══════════════════════════════════════════════════════════════
+// 🔧 DIAGNOSTIC COMPLET — teste email + groq + env sur Render
+// Ouvre dans le navigateur : /api/diagnostic
+// ══════════════════════════════════════════════════════════════
+app.get('/api/diagnostic', async (req, res) => {
+  const results = {
+    timestamp: new Date().toISOString(),
+    environment: process.env.NODE_ENV || 'unknown',
+    variables: {
+      EMAIL_HOST:    process.env.EMAIL_HOST  || '❌ MANQUANT',
+      EMAIL_PORT:    process.env.EMAIL_PORT  || '❌ MANQUANT',
+      EMAIL_USER:    process.env.EMAIL_USER  ? '✅ ' + process.env.EMAIL_USER : '❌ MANQUANT',
+      EMAIL_PASS:    process.env.EMAIL_PASS  ? '✅ défini (' + process.env.EMAIL_PASS.length + ' chars)' : '❌ MANQUANT',
+      GROQ_API_KEY:  process.env.GROQ_API_KEY ? '✅ défini (' + process.env.GROQ_API_KEY.substring(0,8) + '...)' : '❌ MANQUANT',
+      MONGODB_URI:   process.env.MONGODB_URI  ? '✅ défini' : '❌ MANQUANT',
+      PUBLIC_BASE_URL: process.env.PUBLIC_BASE_URL || '❌ MANQUANT',
+      INTERVIEW_URL: process.env.INTERVIEW_URL || '❌ MANQUANT',
+    },
+    smtp: { status: '⏳ test en cours...' },
+    email_send: { status: '⏳ test en cours...' },
+    groq: { status: '⏳ test en cours...' },
+    mongodb: { status: mongoose.connection.readyState === 1 ? '✅ connecté' : '❌ déconnecté' }
+  };
+
+  // ── Test SMTP connexion ──
+  try {
+    const nodemailer = require('nodemailer');
+    const transporter = nodemailer.createTransport({
+      host: process.env.EMAIL_HOST || 'smtp.gmail.com',
+      port: parseInt(process.env.EMAIL_PORT) || 587,
+      secure: false,
+      auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
+    });
+    await transporter.verify();
+    results.smtp = { status: '✅ connexion SMTP OK' };
+
+    // ── Test envoi email réel ──
+    try {
+      const testEmail = req.query.email || process.env.EMAIL_USER;
+      const info = await transporter.sendMail({
+        from: `"E-Team Diagnostic" <${process.env.EMAIL_USER}>`,
+        to: testEmail,
+        subject: '🔧 [DIAGNOSTIC] Test email Render — E-Team',
+        html: `
+          <div style="font-family:sans-serif;padding:20px;border:2px solid #CCFF00;border-radius:12px;max-width:500px;">
+            <h2 style="color:#000;">✅ Email Render fonctionne !</h2>
+            <p>Cet email confirme que le serveur Render peut envoyer des emails.</p>
+            <p><b>Serveur :</b> ${process.env.PUBLIC_BASE_URL || 'Render'}</p>
+            <p><b>SMTP :</b> ${process.env.EMAIL_HOST}:${process.env.EMAIL_PORT}</p>
+            <p><b>Expéditeur :</b> ${process.env.EMAIL_USER}</p>
+            <p><b>Heure :</b> ${new Date().toLocaleString('fr-FR')}</p>
+            <hr>
+            <p style="color:#888;font-size:12px;">Test automatique E-Team Diagnostic</p>
+          </div>
+        `
+      });
+      results.email_send = {
+        status: '✅ email envoyé',
+        to: testEmail,
+        messageId: info.messageId,
+        accepted: info.accepted
+      };
+    } catch (sendErr) {
+      results.email_send = {
+        status: '❌ échec envoi',
+        error: sendErr.message,
+        code: sendErr.code,
+        response: sendErr.response
+      };
+    }
+  } catch (smtpErr) {
+    results.smtp = {
+      status: '❌ connexion SMTP échouée',
+      error: smtpErr.message,
+      code: smtpErr.code
+    };
+    results.email_send = { status: '⏭️ ignoré (SMTP KO)' };
+  }
+
+  // ── Test Groq ──
+  try {
+    const { ChatGroq } = require('@langchain/groq');
+    const llm = new ChatGroq({
+      apiKey: process.env.GROQ_API_KEY,
+      model: 'llama-3.3-70b-versatile',
+      temperature: 0,
+      maxTokens: 20
+    });
+    const resp = await llm.invoke('Réponds juste: OK');
+    results.groq = {
+      status: '✅ Groq API OK',
+      response: resp.content?.substring(0, 50)
+    };
+  } catch (groqErr) {
+    results.groq = {
+      status: '❌ Groq API échouée',
+      error: groqErr.message
+    };
+  }
+
+  res.json(results);
+});
 
 // ✅ Auth routes (User registration & login)
 app.use('/api/auth', authRoutes);
