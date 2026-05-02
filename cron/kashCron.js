@@ -4,8 +4,7 @@ const Groq = require('groq-sdk');
 const User = require('../models/User');
 const Reminder = require('../models/Reminder');
 const Expense = require('../models/Expense');
-const dexoService = require('../services/dexoService');
-
+const dexoService = require('../services/dexo/dexoService');
 // ============================================================================
 // INITIALIZATION
 // ============================================================================
@@ -30,28 +29,11 @@ const transporter = nodemailer.createTransport({
 
 /**
  * Process daily briefing emails
- * @param {String} userId - Optional: Process only this user. If null, process all users with activeAgents: 'kash'.
  */
-const processDaily = async (userId = null) => {
+async function processDaily() {
   try {
     console.log('[Kash Cron] Starting daily email job...');
-    
-    // Determine which users to process
-    let users;
-    if (userId) {
-      // Single user: fetch by ID
-      const user = await User.findById(userId);
-      if (!user) {
-        console.warn(`[Kash Cron] User ${userId} not found`);
-        return;
-      }
-      users = [user];
-      console.log(`[Kash Cron] Processing daily report for specific user: ${userId}`);
-    } else {
-      // All users: fetch those with Kash agent active
-      users = await User.find({ activeAgents: 'kash' });
-      console.log(`[Kash Cron] Processing daily reports for ${users.length} users (Kash agent)`);
-    }
+    const users = await User.find({ activeAgents: 'kash' });
     const today = new Date();
     const todayStr = today.toLocaleDateString('en-GB', {
       year: 'numeric',
@@ -126,15 +108,10 @@ Return ONLY the HTML email body, no explanation, no markdown, no backticks.`;
           subject: `[Kash] Your Daily Financial Briefing — ${todayStr}`,
           html: emailHtml
         });
-
+await dexoService.sendReport('daily', emailHtml, {
+  userEmail: user.email
+});
         console.log(`[Kash Cron] Daily email sent to: ${user.email}`);
-
-        // ──── Send report to Telegram via Dexo ────
-        await dexoService.sendReport('daily', emailHtml, {
-          userEmail: user.email,
-          overdueCount: overdue.length,
-          upcomingCount: upcoming.length
-        });
       } catch (error) {
         console.error(`[Kash Cron] Error processing user ${user._id}: ${error.message}`);
         // Continue with next user
@@ -355,26 +332,11 @@ function _buildWeeklyEmailHTML({
 
 /**
  * Process weekly financial report emails
- * @param {String} targetUserId - Optional: Process only this user. If null, process all users.
  */
-async function processWeekly(targetUserId = null) {
+async function processWeekly() {
   try {
     console.log('[Kash Cron] Starting weekly email job...');
-    
-    // If targetUserId provided, get only that user; otherwise get all users
-    let users;
-    if (targetUserId) {
-      const user = await User.findById(targetUserId);
-      if (!user) {
-        console.warn(`[Kash Cron] User ${targetUserId} not found`);
-        return;
-      }
-      users = [user];
-      console.log(`[Kash Cron] Processing weekly report for user: ${targetUserId}`);
-    } else {
-      users = await User.find({ activeAgents: 'kash' });
-      console.log(`[Kash Cron] Processing weekly reports for ${users.length} users`);
-    }
+    const users = await User.find({ activeAgents: 'kash' });
 
     // Calculate date range for the past 7 days
     const endDate = new Date();
@@ -513,19 +475,16 @@ Return ONLY a valid JSON object with this exact structure, no explanation, no ma
           subject: `[Kash Weekly Report] Financial Summary — Week of ${startDateStr}`,
           html: emailHtml
         });
-
+await dexoService.sendReport('weekly', emailHtml, {
+  userEmail: user.email,
+  startDate: startDateStr,
+  endDate: endDateStr,
+  totalSpent: groqData.totalSpent || totalExpenses,
+  budgetsAtRisk: groqData.budgetsAtRisk || budgetsAtRisk,
+  overduePayments: groqData.overduePayments || overduePayments,
+  aiSummary: groqData.aiSummary
+});
         console.log(`[Kash Cron] Weekly email sent to: ${user.email}`);
-
-        // ────── Send report to Telegram via Dexo ──────
-        await dexoService.sendReport('weekly', emailHtml, {
-          userEmail: user.email,
-          startDate: startDateStr,
-          endDate: endDateStr,
-          totalSpent: groqData.totalSpent || totalExpenses,
-          budgetsAtRisk: groqData.budgetsAtRisk || budgetsAtRisk,
-          overduePayments: groqData.overduePayments || overduePayments,
-          aiSummary: groqData.aiSummary || 'Weekly financial report.'
-        });
       } catch (error) {
         console.error(`[Kash Cron] Error processing user ${user._id}: ${error.message}`);
         // Continue with next user
@@ -544,20 +503,18 @@ Return ONLY a valid JSON object with this exact structure, no explanation, no ma
 
 /**
  * Manual trigger for daily email job (for testing)
- * @param {String} targetUserId - Optional: Send report only to this user. If null, send to all users.
  */
-async function triggerDailyEmailNow(targetUserId = null) {
-  console.log('[Kash Cron] Manual trigger: Daily email' + (targetUserId ? ` for user ${targetUserId}` : ' for all users'));
-  await processDaily(targetUserId);
+async function triggerDailyEmailNow() {
+  console.log('[Kash Cron] Manual trigger: Daily email');
+  await processDaily();
 }
 
 /**
  * Manual trigger for weekly email job (for testing)
- * @param {String} targetUserId - Optional: Send report only to this user. If null, send to all users.
  */
-async function triggerWeeklyEmailNow(targetUserId = null) {
-  console.log('[Kash Cron] Manual trigger: Weekly email' + (targetUserId ? ` for user ${targetUserId}` : ' for all users'));
-  await processWeekly(targetUserId);
+async function triggerWeeklyEmailNow() {
+  console.log('[Kash Cron] Manual trigger: Weekly email');
+  await processWeekly();
 }
 
 // ============================================================================
@@ -589,10 +546,4 @@ function startKashCron() {
 // ============================================================================
 // EXPORTS
 // ============================================================================
-module.exports = { 
-  startKashCron, 
-  triggerDailyEmailNow, 
-  triggerWeeklyEmailNow,
-  processDaily,
-  processWeekly
-};
+module.exports = { startKashCron, triggerDailyEmailNow, triggerWeeklyEmailNow };

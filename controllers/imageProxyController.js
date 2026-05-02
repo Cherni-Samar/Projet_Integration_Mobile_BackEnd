@@ -1,5 +1,14 @@
+// =============================================================
+//  IMAGE PROXY CONTROLLER
+//  Proxies external images to avoid CORS and authentication issues
+// =============================================================
+
 const axios = require('axios');
 
+/**
+ * Proxy external images
+ * GET /api/image-proxy?url=<encoded_url>
+ */
 exports.proxyImage = async (req, res) => {
   try {
     const { url } = req.query;
@@ -13,6 +22,7 @@ exports.proxyImage = async (req, res) => {
 
     console.log(`🖼️ [IMAGE PROXY] Fetching: ${url}`);
 
+    // Fetch the image with proper headers
     const response = await axios.get(url, {
       responseType: 'arraybuffer',
       headers: {
@@ -31,20 +41,24 @@ exports.proxyImage = async (req, res) => {
       maxRedirects: 5
     });
 
+    // Get content type from response or default to jpeg
     const contentType = response.headers['content-type'] || 'image/jpeg';
 
+    // Set appropriate headers
     res.set({
       'Content-Type': contentType,
-      'Cache-Control': 'public, max-age=86400',
+      'Cache-Control': 'public, max-age=86400', // Cache for 24 hours
       'Access-Control-Allow-Origin': '*'
     });
 
+    // Send the image
     res.send(Buffer.from(response.data, 'binary'));
 
     console.log(`✅ [IMAGE PROXY] Image served successfully`);
   } catch (error) {
     console.error('❌ [IMAGE PROXY] Error:', error.message);
     
+    // Return a 1x1 transparent pixel as fallback
     const transparentPixel = Buffer.from(
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
       'base64'

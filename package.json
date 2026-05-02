@@ -4,14 +4,7 @@
   "private": true,
   "scripts": {
     "start": "node app.js",
-    "dev": "nodemon app.js",
-    "test": "node test-integration.js",
-    "test:verbose": "node test-integration.js --verbose",
-    "test:json": "node test-integration.js --reporter=json",
-    "health-check": "node health-check.js",
-    "deploy": "node deploy.js",
-    "test-daily": "curl http://localhost:3000/api/kash/test-daily",
-    "test-weekly": "curl http://localhost:3000/api/kash/test-weekly"
+    "dev": "nodemon app.js"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
@@ -35,6 +28,7 @@
     "jade": "~1.11.0",
     "jsonwebtoken": "^9.0.3",
     "langchain": "^1.2.39",
+    "mongodb": "^7.1.1",
     "mongoose": "^9.1.6",
     "morgan": "~1.9.1",
     "multer": "^2.1.1",
@@ -42,6 +36,7 @@
     "node-fetch": "^3.3.2",
     "node-telegram-bot-api": "^0.67.0",
     "nodemailer": "^8.0.5",
+    "open": "^11.0.0",
     "openai": "^6.25.0",
     "pdfkit": "^0.18.0",
     "qrcode-terminal": "^0.12.0",

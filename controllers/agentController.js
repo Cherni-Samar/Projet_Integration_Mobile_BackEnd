@@ -1,205 +1,788 @@
-const hrAgent = require('../agents/hrAgent');
-const echoAgent = require('../services/echoAgent');
-const dexoAgent = require('../agents/DexoAgent');
+// =============================================================
+//  CONTROLLER - Agent Management & Energy System
+// =============================================================
+
+const Agent = require('../models/Agent');
 const User = require('../models/User');
 
-// 🔹 Hire agent
-exports.hireAgent = async (req, res, next) => {
+// ─────────────────────────────────────────────
+// GET ALL AGENTS WITH ENERGY STATUS
+// GET /api/agents
+// ─────────────────────────────────────────────
+const hireAgent = async (req, res) => {
   try {
-    const { agentId } = req.body;
+    const { agentId } = req.body; // 'hera', 'echo', etc.
+    const userId = req.user.id;
 
-    if (!agentId) {
-      return res.status(400).json({
-        success: false,
-        message: 'agentId requis',
+    const user = await User.findById(userId);
+    if (!user) return res.status(404).json({ success: false, message: "Utilisateur non trouvé" });
+
+    // Vérifier si l'agent est déjà dans la liste
+    if (user.activeAgents.includes(agentId.toLowerCase())) {
+      return res.status(400).json({ success: false, message: "Cet agent est déjà actif" });
+    }
+
+    // Vérifier la limite d'agents
+    if (user.activeAgents.length >= user.maxAgentsAllowed) {
+      return res.status(400).json({ 
+        success: false, 
+        message: `Limite d'agents atteinte (${user.maxAgentsAllowed}). Mettez à niveau votre plan pour ajouter plus d'agents.` 
       });
     }
 
-    const user = await User.findById(req.user.id).select('activeAgents maxAgentsAllowed');
+    // Ajouter l'agent à la liste
+    user.activeAgents.push(agentId.toLowerCase());
+    
+    // Optionnel : On peut déduire de l'énergie ici si le "Hire" coûte quelque chose
+    // user.energyBalance -= 100; 
 
+    await user.save();
+
+    console.log(`👤 [USER] ${user.email} a recruté l'agent : ${agentId}`);
+
+    res.json({
+      success: true,
+      message: `Agent ${agentId} recruté avec succès !`,
+      activeAgents: user.activeAgents
+    });
+  } catch (error) {
+    console.error('❌ Error hireAgent:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+};
+
+// ─────────────────────────────────────────────
+// GET USER'S ACTIVE AGENTS (MY AGENTS PAGE)
+// GET /api/agents/my-agents
+// ─────────────────────────────────────────────
+const getMyAgents = async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const user = await User.findById(userId);
+    
     if (!user) {
+      return res.status(404).json({ 
+        success: false, 
+        message: "Utilisateur non trouvé" 
+      });
+    }
+
+    // Get only user's active agents
+    const agents = await Agent.find({ 
+      name: { $in: user.activeAgents },
+      status: 'active' 
+    }).sort({ name: 1 });
+    
+    console.log(`👤 [MY AGENTS] User ${user.email} has ${user.activeAgents.length} active agents: ${JSON.stringify(user.activeAgents)}`);
+    
+    res.json({
+      success: true,
+      data: {
+        activeAgents: user.activeAgents,
+        maxAgentsAllowed: user.maxAgentsAllowed,
+        subscriptionPlan: user.subscriptionPlan,
+        agents: agents.map(agent => ({
+          id: agent._id,
+          name: agent.name,
+          displayName: agent.displayName,
+          description: agent.description,
+          avatar: agent.avatar,
+          energy: agent.energy,
+          maxEnergy: agent.maxEnergy,
+          energyPercentage: agent.getEnergyPercentage(),
+          status: agent.status,
+          readyStatus: agent.readyStatus,
+          specialties: agent.specialties,
+          isReady: agent.isReady(),
+          stats: agent.stats,
+          lastActivity: agent.lastActivity
+        })),
+        agentCount: agents.length
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('❌ Error getMyAgents:', error);
+    res.status(500).json({ 
+      success: false, 
+      error: 'Internal server error',
+      details: error.message 
+    });
+  }
+};
+const getAllAgents = async (req, res) => {
+  try {
+    const agents = await Agent.find({ status: 'active' }).sort({ name: 1 });
+    
+    // Calculate total energy
+    const totalEnergy = agents.reduce((sum, agent) => sum + agent.energy, 0);
+    
+    res.json({
+      success: true,
+      data: {
+        agents: agents.map(agent => ({
+          id: agent._id,
+          name: agent.name,
+          displayName: agent.displayName,
+          description: agent.description,
+          avatar: agent.avatar,
+          energy: agent.energy,
+          maxEnergy: agent.maxEnergy,
+          energyPercentage: agent.getEnergyPercentage(),
+          status: agent.status,
+          readyStatus: agent.readyStatus,
+          specialties: agent.specialties,
+          isReady: agent.isReady(),
+          stats: agent.stats,
+          lastActivity: agent.lastActivity
+        })),
+        totalEnergy: totalEnergy,
+        agentCount: agents.length
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('❌ Error getAllAgents:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error',
+      details: error.message
+    });
+  }
+};
+
+// ─────────────────────────────────────────────
+// GET SINGLE AGENT
+// GET /api/agents/:id
+// ─────────────────────────────────────────────
+const getAgent = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const agent = await Agent.findById(id);
+    
+    if (!agent) {
       return res.status(404).json({
         success: false,
-        message: 'Utilisateur non trouvé',
+        error: 'Agent not found'
       });
     }
+    
+    res.json({
+      success: true,
+      data: {
+        id: agent._id,
+        name: agent.name,
+        displayName: agent.displayName,
+        description: agent.description,
+        avatar: agent.avatar,
+        energy: agent.energy,
+        maxEnergy: agent.maxEnergy,
+        energyPercentage: agent.getEnergyPercentage(),
+        status: agent.status,
+        readyStatus: agent.readyStatus,
+        specialties: agent.specialties,
+        isReady: agent.isReady(),
+        stats: agent.stats,
+        lastActivity: agent.lastActivity,
+        createdAt: agent.createdAt,
+        updatedAt: agent.updatedAt
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('❌ Error getAgent:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error',
+      details: error.message
+    });
+  }
+};
 
-    const activeAgents = Array.isArray(user.activeAgents) ? user.activeAgents : [];
-    const maxAgentsAllowed = typeof user.maxAgentsAllowed === 'number' ? user.maxAgentsAllowed : 1;
+// ─────────────────────────────────────────────
+// UPDATE AGENT ENERGY
+// PUT /api/agents/:id/energy
+// Body: { energy: 150 }
+// ─────────────────────────────────────────────
+const updateAgentEnergy = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { energy } = req.body;
+    
+    if (typeof energy !== 'number' || energy < 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Energy must be a positive number'
+      });
+    }
+    
+    const agent = await Agent.findById(id);
+    if (!agent) {
+      return res.status(404).json({
+        success: false,
+        error: 'Agent not found'
+      });
+    }
+    
+    // Check if energy exceeds max energy
+    if (energy > agent.maxEnergy) {
+      return res.status(400).json({
+        success: false,
+        error: `Energy cannot exceed maximum energy (${agent.maxEnergy})`
+      });
+    }
+    
+    const oldEnergy = agent.energy;
+    agent.energy = energy;
+    agent.lastActivity = new Date();
+    await agent.save();
+    
+    console.log(`⚡ [AGENT] ${agent.name} energy updated: ${oldEnergy} → ${energy}`);
+    
+    res.json({
+      success: true,
+      message: `${agent.displayName} energy updated successfully`,
+      data: {
+        id: agent._id,
+        name: agent.name,
+        displayName: agent.displayName,
+        energy: agent.energy,
+        maxEnergy: agent.maxEnergy,
+        energyPercentage: agent.getEnergyPercentage(),
+        previousEnergy: oldEnergy,
+        energyChange: energy - oldEnergy
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('❌ Error updateAgentEnergy:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error',
+      details: error.message
+    });
+  }
+};
 
-    if (!activeAgents.includes(agentId)) {
-      if (activeAgents.length >= maxAgentsAllowed) {
-        const err = new Error("Limite d'agents atteinte pour votre plan.");
-        err.statusCode = 403;
-        throw err;
+// ─────────────────────────────────────────────
+// DISTRIBUTE ENERGY AMONG ALL AGENTS
+// POST /api/agents/distribute-energy
+// Body: { distributions: [{ agentId: "id1", energy: 150 }, { agentId: "id2", energy: 200 }] }
+// ─────────────────────────────────────────────
+const distributeEnergy = async (req, res) => {
+  try {
+    const { distributions } = req.body;
+    
+    if (!Array.isArray(distributions) || distributions.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Distributions array is required'
+      });
+    }
+    
+    // Validate distributions
+    let totalEnergyToDistribute = 0;
+    for (const dist of distributions) {
+      if (!dist.agentId || typeof dist.energy !== 'number' || dist.energy < 0) {
+        return res.status(400).json({
+          success: false,
+          error: 'Each distribution must have agentId and positive energy value'
+        });
       }
+      totalEnergyToDistribute += dist.energy;
+    }
+    
+    // Get all agents to update
+    const agentIds = distributions.map(d => d.agentId);
+    const agents = await Agent.find({ _id: { $in: agentIds } });
+    
+    if (agents.length !== distributions.length) {
+      return res.status(404).json({
+        success: false,
+        error: 'One or more agents not found'
+      });
+    }
+    
+    // Check max energy limits
+    for (const dist of distributions) {
+      const agent = agents.find(a => a._id.toString() === dist.agentId);
+      if (dist.energy > agent.maxEnergy) {
+        return res.status(400).json({
+          success: false,
+          error: `Energy for ${agent.displayName} cannot exceed maximum energy (${agent.maxEnergy})`
+        });
+      }
+    }
+    
+    // Update all agents
+    const updateResults = [];
+    for (const dist of distributions) {
+      const agent = agents.find(a => a._id.toString() === dist.agentId);
+      const oldEnergy = agent.energy;
+      agent.energy = dist.energy;
+      agent.lastActivity = new Date();
+      await agent.save();
+      
+      updateResults.push({
+        id: agent._id,
+        name: agent.name,
+        displayName: agent.displayName,
+        energy: agent.energy,
+        maxEnergy: agent.maxEnergy,
+        energyPercentage: agent.getEnergyPercentage(),
+        previousEnergy: oldEnergy,
+        energyChange: dist.energy - oldEnergy
+      });
+      
+      console.log(`⚡ [AGENT] ${agent.name} energy updated: ${oldEnergy} → ${dist.energy}`);
+    }
+    
+    res.json({
+      success: true,
+      message: `Energy distributed to ${distributions.length} agents`,
+      data: {
+        totalEnergyDistributed: totalEnergyToDistribute,
+        agents: updateResults
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('❌ Error distributeEnergy:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error',
+      details: error.message
+    });
+  }
+};
 
-      user.activeAgents = [...activeAgents, agentId];
+// ─────────────────────────────────────────────
+// BUY ENERGY FOR USER
+// POST /api/agents/buy-energy
+// Body: { amount: 100, paymentMethod: "stripe" }
+// ─────────────────────────────────────────────
+const buyEnergy = async (req, res) => {
+  try {
+    const { amount, paymentMethod = 'stripe' } = req.body;
+    const userId = req.user?.id; // Get from auth middleware if available
+    
+    if (typeof amount !== 'number' || amount <= 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Amount must be a positive number'
+      });
+    }
+    
+    if (amount > 1000) {
+      return res.status(400).json({
+        success: false,
+        error: 'Maximum energy purchase is 1000 per transaction'
+      });
+    }
+    
+    // Calculate price (example: 1 energy = $0.10)
+    const pricePerEnergy = 0.10;
+    const totalPrice = amount * pricePerEnergy;
+    
+    // Here you would integrate with payment processor (Stripe, PayPal, etc.)
+    // For now, we'll simulate a successful payment
+    const paymentResult = await simulatePayment(totalPrice, paymentMethod);
+    
+    if (!paymentResult.success) {
+      return res.status(400).json({
+        success: false,
+        error: 'Payment failed',
+        details: paymentResult.error
+      });
+    }
+    
+    // Find or create user energy record
+    let user;
+    if (userId) {
+      user = await User.findById(userId);
+    }
+    
+    if (!user) {
+      // For demo purposes, create a default user or use existing one
+      user = await User.findOne({ email: 'demo@e-team.com' });
+      if (!user) {
+        user = new User({
+          email: 'demo@e-team.com',
+          password: 'demo123',
+          name: 'Demo User',
+          energyBalance: 0,
+          totalEnergyPurchased: 0
+        });
+        await user.save();
+      }
+    }
+    
+    // Add energy to user balance
+    user.energyBalance = (user.energyBalance || 0) + amount;
+    user.totalEnergyPurchased = (user.totalEnergyPurchased || 0) + amount;
+    user.lastEnergyPurchase = new Date();
+    await user.save();
+    
+    console.log(`💰 [ENERGY] User ${userId} purchased ${amount} energy for $${totalPrice.toFixed(2)}`);
+    
+    res.json({
+      success: true,
+      message: `Successfully purchased ${amount} energy`,
+      data: {
+        energyPurchased: amount,
+        totalPrice: totalPrice,
+        paymentMethod: paymentMethod,
+        transactionId: paymentResult.transactionId,
+        userEnergyBalance: user.energyBalance,
+        totalEnergyPurchased: user.totalEnergyPurchased
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('❌ Error buyEnergy:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error',
+      details: error.message
+    });
+  }
+};
+
+// ─────────────────────────────────────────────
+// GET USER ENERGY BALANCE
+// GET /api/agents/energy-balance
+// ─────────────────────────────────────────────
+const getEnergyBalance = async (req, res) => {
+  try {
+    const userId = req.user?.id;
+    
+    let user;
+    if (userId) {
+      user = await User.findById(userId);
+    }
+    
+    if (!user) {
+      // For demo purposes, use default demo user
+      user = await User.findOne({ email: 'demo@e-team.com' });
+    }
+    
+    // Get current agent energy distribution
+    const agents = await Agent.find({ status: 'active' });
+    const totalAgentEnergy = agents.reduce((sum, agent) => sum + agent.energy, 0);
+    
+    // SYNCHRONIZE: User energy balance should equal total agent energy
+    if (user && user.energyBalance !== totalAgentEnergy) {
+      console.log(`🔄 [SYNC] Synchronizing user energy: ${user.energyBalance} → ${totalAgentEnergy}`);
+      user.energyBalance = totalAgentEnergy;
       await user.save();
     }
-
-    res.status(200).json({
-      success: true,
-      activeAgents: user.activeAgents,
-      maxAgentsAllowed: user.maxAgentsAllowed,
-    });
-
-  } catch (err) {
-    next(err);
-  }
-};
-
-// 🔹 HR GET
-exports.getHR = async (req, res) => {
-  try {
-    const result = await hrAgent.process('hello', {}, {
-      username: req.query.username,
-    });
-    res.json(result);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-};
-
-// 🔹 HR POST
-exports.postHR = async (req, res) => {
-  try {
-    const { intent, payload, context } = req.body;
-    const result = await hrAgent.process(intent, payload, context);
-    res.json(result);
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-};
-
-// 🔹 Echo GET
-exports.getEcho = async (req, res) => {
-  try {
+    
+    const energyBalance = totalAgentEnergy; // Use total agent energy as user energy
+    const totalEnergyPurchased = user?.totalEnergyPurchased || 0;
+    
     res.json({
       success: true,
-      agent: 'echo',
-      status: 'active',
-      capabilities: ['message_analysis', 'priority_detection', 'spam_filtering', 'categorization'],
-      version: '1.0.0'
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-};
-
-// 🔹 Echo POST
-exports.postEcho = async (req, res) => {
-  try {
-    const { message, sender } = req.body;
-
-    if (!message) {
-      return res.status(400).json({
-        success: false,
-        message: 'Message is required'
-      });
-    }
-
-    const user = await User.findById(req.user.id).select('activeAgents');
-
-    if (!user || !user.activeAgents.includes('echo')) {
-      return res.status(403).json({
-        success: false,
-        message: 'Echo agent not activated for this user'
-      });
-    }
-
-    const result = await echoAgent.analyze(message, sender || req.user.email);
-
-    res.json({
-      success: true,
-      agent: 'echo',
-      analysis: result,
+      data: {
+        userEnergyBalance: energyBalance,
+        totalEnergyPurchased: totalEnergyPurchased,
+        totalAgentEnergy: totalAgentEnergy,
+        availableEnergy: energyBalance,
+        lastEnergyPurchase: user?.lastEnergyPurchase || null,
+        agents: agents.map(agent => ({
+          id: agent._id,
+          name: agent.name,
+          displayName: agent.displayName,
+          energy: agent.energy,
+          maxEnergy: agent.maxEnergy,
+          energyPercentage: agent.getEnergyPercentage()
+        }))
+      },
       timestamp: new Date().toISOString()
     });
-
-  } catch (err) {
+  } catch (error) {
+    console.error('❌ Error getEnergyBalance:', error);
     res.status(500).json({
       success: false,
-      error: err.message
+      error: 'Internal server error',
+      details: error.message
     });
   }
 };
 
-// 🔹 Dexo GET
-exports.getDexo = async (req, res) => {
+// ─────────────────────────────────────────────
+// USE ENERGY FROM USER BALANCE TO POWER AGENTS
+// POST /api/agents/power-agents
+// Body: { distributions: [{ agentId: "id1", energy: 50 }] }
+// ─────────────────────────────────────────────
+const powerAgents = async (req, res) => {
   try {
-    res.json({
-      success: true,
-      agent: 'dexo',
-      status: 'active',
-      capabilities: [
-        'document_classification',
-        'intelligent_search',
-        'security_monitoring',
-        'duplicate_detection',
-        'version_management',
-        'expiration_tracking',
-        'document_generation',
-        'access_control'
-      ],
-      version: '1.0.0',
-      integrations: ['langchain', 'n8n', 'groq'],
-      mission: 'Gérer et sécuriser les documents intelligemment'
-    });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-};
-
-// 🔹 Dexo POST
-exports.postDexo = async (req, res) => {
-  try {
-    const { filename, content, action = 'classify', metadata = {} } = req.body;
-
-    if (!filename || !content) {
+    const { distributions } = req.body;
+    const userId = req.user?.id;
+    
+    if (!Array.isArray(distributions) || distributions.length === 0) {
       return res.status(400).json({
         success: false,
-        message: 'Filename and content are required'
+        error: 'Distributions array is required'
       });
     }
-
-    const user = await User.findById(req.user.id).select('activeAgents');
-
-    if (!user || !user.activeAgents.includes('dexo')) {
-      return res.status(403).json({
+    
+    // Calculate total energy needed
+    let totalEnergyNeeded = 0;
+    for (const dist of distributions) {
+      if (!dist.agentId || typeof dist.energy !== 'number' || dist.energy < 0) {
+        return res.status(400).json({
+          success: false,
+          error: 'Each distribution must have agentId and positive energy value'
+        });
+      }
+      totalEnergyNeeded += dist.energy;
+    }
+    
+    // Check user energy balance
+    let user;
+    if (userId) {
+      user = await User.findById(userId);
+    }
+    
+    if (!user) {
+      // For demo purposes, use default demo user
+      user = await User.findOne({ email: 'demo@e-team.com' });
+    }
+    
+    const userEnergyBalance = user?.energyBalance || 0;
+    
+    if (userEnergyBalance < totalEnergyNeeded) {
+      return res.status(400).json({
         success: false,
-        message: 'Dexo agent not activated for this user'
+        error: `Insufficient energy balance. You have ${userEnergyBalance}, need ${totalEnergyNeeded}`,
+        data: {
+          userBalance: userEnergyBalance,
+          energyNeeded: totalEnergyNeeded,
+          shortfall: totalEnergyNeeded - userEnergyBalance
+        }
       });
     }
-
-    let result;
-
-    switch (action) {
-      case 'classify':
-        result = await dexoAgent.classifyDocument(filename, content, metadata);
-        break;
-      case 'process':
-        result = await dexoAgent.processDocument(filename, content, req.user.id, metadata);
-        break;
-      case 'detect_duplicates':
-        result = await dexoAgent.detectDuplicates(filename, content, metadata);
-        break;
-      default:
-        result = await dexoAgent.classifyDocument(filename, content, metadata);
+    
+    // Get agents and validate
+    const agentIds = distributions.map(d => d.agentId);
+    const agents = await Agent.find({ _id: { $in: agentIds } });
+    
+    if (agents.length !== distributions.length) {
+      return res.status(404).json({
+        success: false,
+        error: 'One or more agents not found'
+      });
     }
-
+    
+    // Check max energy limits
+    for (const dist of distributions) {
+      const agent = agents.find(a => a._id.toString() === dist.agentId);
+      if (agent.energy + dist.energy > agent.maxEnergy) {
+        return res.status(400).json({
+          success: false,
+          error: `Adding ${dist.energy} energy to ${agent.displayName} would exceed maximum energy (${agent.maxEnergy})`
+        });
+      }
+    }
+    
+    // Deduct energy from user balance
+    user.energyBalance -= totalEnergyNeeded;
+    await user.save();
+    
+    // Add energy to agents
+    const updateResults = [];
+    for (const dist of distributions) {
+      const agent = agents.find(a => a._id.toString() === dist.agentId);
+      const oldEnergy = agent.energy;
+      agent.addEnergy(dist.energy);
+      agent.lastActivity = new Date();
+      await agent.save();
+      
+      updateResults.push({
+        id: agent._id,
+        name: agent.name,
+        displayName: agent.displayName,
+        energy: agent.energy,
+        maxEnergy: agent.maxEnergy,
+        energyPercentage: agent.getEnergyPercentage(),
+        previousEnergy: oldEnergy,
+        energyAdded: dist.energy
+      });
+      
+      console.log(`⚡ [POWER] ${agent.name} powered up: ${oldEnergy} → ${agent.energy} (+${dist.energy})`);
+    }
+    
     res.json({
       success: true,
-      agent: 'dexo',
-      action,
-      result,
+      message: `Successfully powered ${distributions.length} agents`,
+      data: {
+        totalEnergyUsed: totalEnergyNeeded,
+        userEnergyBalance: user.energyBalance,
+        agents: updateResults
+      },
       timestamp: new Date().toISOString()
     });
-
-  } catch (err) {
+  } catch (error) {
+    console.error('❌ Error powerAgents:', error);
     res.status(500).json({
       success: false,
-      error: err.message
+      error: 'Internal server error',
+      details: error.message
     });
   }
+};
+
+// ─────────────────────────────────────────────
+// INITIALIZE AGENTS (Setup default agents)
+// POST /api/agents/initialize
+// ─────────────────────────────────────────────
+const initializeAgents = async (req, res) => {
+  try {
+    // Check if agents already exist
+    const existingAgents = await Agent.find();
+    if (existingAgents.length > 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Agents already initialized',
+        data: {
+          existingAgents: existingAgents.length
+        }
+      });
+    }
+    
+    // Create the 5 default agents with distributed energy (total = 850)
+    const defaultAgents = [
+      {
+        name: 'dexo',
+        displayName: 'Dexo',
+        description: 'Document processing and analysis specialist',
+        avatar: '/images/agents/dexo.png',
+        energy: 170, // 20% of 850
+        maxEnergy: 200,
+        specialties: ['document-processing', 'data-analysis', 'classification'],
+        status: 'active',
+        readyStatus: 'ready'
+      },
+      {
+        name: 'timo',
+        displayName: 'Timo',
+        description: 'Time management and scheduling expert',
+        avatar: '/images/agents/timo.png',
+        energy: 170, // 20% of 850
+        maxEnergy: 200,
+        specialties: ['scheduling', 'time-management', 'calendar'],
+        status: 'active',
+        readyStatus: 'ready'
+      },
+      {
+        name: 'echo',
+        displayName: 'Echo',
+        description: 'Communication and social media automation',
+        avatar: '/images/agents/echo.png',
+        energy: 170, // 20% of 850
+        maxEnergy: 200,
+        specialties: ['communication', 'social-media', 'content-generation'],
+        status: 'active',
+        readyStatus: 'ready'
+      },
+      {
+        name: 'hera',
+        displayName: 'Hera',
+        description: 'HR management and recruitment specialist',
+        avatar: '/images/agents/hera.png',
+        energy: 170, // 20% of 850
+        maxEnergy: 200,
+        specialties: ['hr-management', 'recruitment', 'employee-relations'],
+        status: 'active',
+        readyStatus: 'ready'
+      },
+      {
+        name: 'kash',
+        displayName: 'Kash',
+        description: 'Financial analysis and payment processing',
+        avatar: '/images/agents/kash.png',
+        energy: 170, // 20% of 850
+        maxEnergy: 200,
+        specialties: ['financial-analysis', 'payments', 'accounting'],
+        status: 'active',
+        readyStatus: 'ready'
+      }
+    ];
+    
+    // Create all agents
+    const createdAgents = await Agent.insertMany(defaultAgents);
+    
+    // Calculate total energy
+    const totalEnergy = createdAgents.reduce((sum, agent) => sum + agent.energy, 0);
+    
+    console.log(`🚀 [AGENTS] Initialized ${createdAgents.length} agents with total energy: ${totalEnergy}`);
+    
+    res.json({
+      success: true,
+      message: `Successfully initialized ${createdAgents.length} agents`,
+      data: {
+        agents: createdAgents.map(agent => ({
+          id: agent._id,
+          name: agent.name,
+          displayName: agent.displayName,
+          energy: agent.energy,
+          maxEnergy: agent.maxEnergy,
+          energyPercentage: agent.getEnergyPercentage(),
+          specialties: agent.specialties,
+          status: agent.status,
+          readyStatus: agent.readyStatus
+        })),
+        totalEnergy: totalEnergy,
+        agentCount: createdAgents.length
+      },
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    console.error('❌ Error initializeAgents:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Internal server error',
+      details: error.message
+    });
+  }
+};
+
+// ─────────────────────────────────────────────
+// HELPER FUNCTIONS
+// ─────────────────────────────────────────────
+
+// Simulate payment processing (replace with real payment integration)
+async function simulatePayment(amount, paymentMethod) {
+  // Simulate payment delay
+  await new Promise(resolve => setTimeout(resolve, 1000));
+  
+  // Simulate 95% success rate
+  const success = Math.random() > 0.05;
+  
+  if (success) {
+    return {
+      success: true,
+      transactionId: `txn_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      amount: amount,
+      paymentMethod: paymentMethod
+    };
+  } else {
+    return {
+      success: false,
+      error: 'Payment declined by processor'
+    };
+  }
+}
+
+module.exports = {
+  getAllAgents,
+  getAgent,
+  updateAgentEnergy,
+  distributeEnergy,
+  buyEnergy,
+  getEnergyBalance,
+  powerAgents,
+  initializeAgents,
+  hireAgent,
+  getMyAgents
 };

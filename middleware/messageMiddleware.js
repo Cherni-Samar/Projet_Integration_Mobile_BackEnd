@@ -1,4 +1,4 @@
-const groqAgent = require('../services/groqAgent');
+const groqAgent = require('../services/shared/groqAgent');
 
 const validateMessage = (req, res, next) => {
   // GET /stats, GET /history, etc. n'ont pas de body « message »

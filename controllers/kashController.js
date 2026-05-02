@@ -6,7 +6,8 @@ const Budget = require('../models/Budget');
 const axios = require('axios');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const Groq = require('groq-sdk');
-const emailSender = require('../services/emailSender');
+const emailSender = require('../services/shared/emailSender');
+const financeService = require('../services/kash/finance.service');
 
 const ENERGY_COST_ADD_EXPENSE = 5;
 const ENERGY_COST_ANALYZE_RECEIPT = 10;
@@ -462,68 +463,16 @@ exports.analyzeReceipt = async (req, res, next) => {
     }
 
     const { imageUrl, imageBase64 } = req.body ?? {};
-    const inlineData = await coerceToGeminiInlineData({ imageUrl, imageBase64 });
-
-    if (!inlineData) {
-      return res.status(400).json({ success: false, message: 'imageUrl ou imageBase64 requis' });
-    }
-
-    // Atomic energy debit
-    const updatedUser = await User.findOneAndUpdate(
-      { _id: userId, energyBalance: { $gte: ENERGY_COST_ANALYZE_RECEIPT } },
-      { $inc: { energyBalance: -ENERGY_COST_ANALYZE_RECEIPT } },
-      { new: true }
-    ).lean();
-
-    if (!updatedUser) {
-      return res.status(403).json({
-        success: false,
-        message: "Énergie insuffisante pour l'analyse IA",
-        requiredEnergy: ENERGY_COST_ANALYZE_RECEIPT,
-      });
-    }
-
-    try {
-      const extracted = await analyzeReceiptWithGemini({ inlineData });
-      const validation = validateGeminiExtraction(extracted);
-
-      if (!validation.ok) {
-        const err = new Error(`Réponse Gemini invalide: ${validation.message}`);
-        err.statusCode = 502;
-        throw err;
-      }
-
-      if (validation.invalidDocument) {
-        return res.status(400).json({
-          success: false,
-          message: validation.error || 'Invalid document',
-        });
-      }
-
-      return res.status(200).json({
-        success: true,
-        message: 'Analyse terminée. Validez avant enregistrement.',
-        data: {
-          extracted: {
-            amount: extracted.amount,
-            currency: extracted.currency,
-            vendor: extracted.vendor,
-            category: extracted.category,
-            date: extracted.date,
-            description: typeof extracted.description === 'string' ? extracted.description : '',
-          },
-          energyBalance: updatedUser.energyBalance,
-        },
-      });
-    } catch (err) {
-      // Rollback energy on Gemini failure
-      await User.updateOne(
-        { _id: userId },
-        { $inc: { energyBalance: ENERGY_COST_ANALYZE_RECEIPT } }
-      );
-      throw err;
-    }
+    const result = await financeService.analyzeReceipt(userId, { imageUrl, imageBase64 });
+    res.json(result);
   } catch (error) {
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({
+        success: false,
+        message: error.message,
+        ...(error.requiredEnergy && { requiredEnergy: error.requiredEnergy })
+      });
+    }
     next(error);
   }
 };
@@ -541,153 +490,15 @@ exports.addExpense = async (req, res, next) => {
     }
 
     const { amount, currency, vendor, category, date, description, employeeId } = req.body ?? {};
-
-    if (amount === undefined || amount === null || amount === '') {
-      return res.status(400).json({ success: false, message: 'amount requis' });
-    }
-
-    const normalizedAmount = Number(amount);
-    if (!Number.isFinite(normalizedAmount)) {
-      return res.status(400).json({ success: false, message: 'amount invalide' });
-    }
-
-    // Atomic energy debit
-    const updatedUser = await User.findOneAndUpdate(
-      { _id: userId, energyBalance: { $gte: ENERGY_COST_ADD_EXPENSE } },
-      { $inc: { energyBalance: -ENERGY_COST_ADD_EXPENSE } },
-      { new: true }
-    ).lean();
-
-    if (!updatedUser) {
-      return res.status(403).json({
-        success: false,
-        message: 'Énergie insuffisante pour ajouter une dépense',
-      });
-    }
-
-    try {
-      // Check budget constraint if category is provided
-      let expenseStatus = 'pending';
-      let budgetAlert = null;
-
-      if (category) {
-        try {
-          const budget = await Budget.findOne({
-            managerId: userId,
-            category: category,
-            isActive: true,
-          });
-
-          if (budget && budget.limit > 0) {
-            const newSpent = budget.spent + normalizedAmount;
-
-            if (newSpent > budget.limit) {
-              // Budget exceeded - flag the expense
-              expenseStatus = 'flagged';
-              budgetAlert = {
-                type: 'BUDGET_EXCEEDED',
-                message: `Attention : Budget ${category} dépassé !`,
-                details: {
-                  category,
-                  budgetLimit: budget.limit,
-                  currentSpent: budget.spent,
-                  newAmount: normalizedAmount,
-                  projectedSpent: newSpent,
-                  excess: newSpent - budget.limit,
-                },
-              };
-              console.log(`[Kash] Budget exceeded for ${category}: ${newSpent} > ${budget.limit}`);
-            } else if (newSpent > budget.limit * 0.8) {
-              // Budget approaching limit - warning
-              budgetAlert = {
-                type: 'BUDGET_WARNING',
-                message: `Attention : Vous avez atteint ${((newSpent / budget.limit) * 100).toFixed(0)}% du budget ${category}`,
-                details: {
-                  category,
-                  budgetLimit: budget.limit,
-                  currentSpent: budget.spent,
-                  newAmount: normalizedAmount,
-                  projectedSpent: newSpent,
-                  percentage: ((newSpent / budget.limit) * 100).toFixed(2),
-                },
-              };
-            }
-          }
-        } catch (budgetCheckErr) {
-          console.warn(`[Kash] Failed to check budget: ${budgetCheckErr.message}`);
-          // Don't fail expense creation if budget check fails
-        }
-      }
-
-      const expense = await Expense.create({
-        managerId: userId,
-        employeeId: employeeId || null,
-        amount: normalizedAmount,
-        ...(currency !== undefined ? { currency } : {}),
-        ...(vendor !== undefined ? { vendor } : {}),
-        ...(category !== undefined ? { category } : {}),
-        ...(date !== undefined ? { date } : {}),
-        ...(description !== undefined ? { description } : {}),
-        status: expenseStatus, // Set status based on budget check
-      });
-
-      // Update budget spent if category exists
-      if (category) {
-        try {
-          await Budget.findOneAndUpdate(
-            {
-              managerId: userId,
-              category: category,
-              isActive: true,
-            },
-            { $inc: { spent: normalizedAmount } },
-            { new: true }
-          );
-          console.log(`[Kash] Updated budget spent for ${category}: +${normalizedAmount}`);
-        } catch (budgetUpdateErr) {
-          console.warn(`[Kash] Failed to update budget spent: ${budgetUpdateErr.message}`);
-        }
-      }
-
-      // Send budget alert email if needed
-      if (budgetAlert) {
-        try {
-          const user = await User.findById(userId);
-          if (user) {
-            await sendBudgetAlertEmail(user, budgetAlert.message, budgetAlert.type, budgetAlert.details);
-          }
-        } catch (emailErr) {
-          console.warn(`[Kash] Failed to send budget alert email: ${emailErr.message}`);
-        }
-      }
-
-      // Recalculate budget spent dynamically for user dashboard
-      if (category) {
-        try {
-          await recalculateBudgetSpent(userId);
-        } catch (budgetErr) {
-          console.warn(`[Kash] Failed to recalculate budget: ${budgetErr.message}`);
-        }
-      }
-
-      return res.status(201).json({
-        success: true,
-        message: budgetAlert ? budgetAlert.message : 'Dépense ajoutée',
-        data: {
-          expense,
-          energyBalance: updatedUser.energyBalance,
-          budgetAlert: budgetAlert || null,
-        },
-      });
-    } catch (err) {
-      // Rollback energy on expense creation failure
-      await User.updateOne(
-        { _id: userId },
-        { $inc: { energyBalance: ENERGY_COST_ADD_EXPENSE } }
-      );
-      throw err;
-    }
+    const result = await financeService.addExpense(userId, { amount, currency, vendor, category, date, description, employeeId });
+    res.status(201).json(result);
   } catch (error) {
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({
+        success: false,
+        message: error.message,
+      });
+    }
     next(error);
   }
 };
@@ -704,15 +515,8 @@ exports.getExpenses = async (req, res, next) => {
       return res.status(401).json({ success: false, message: 'Unauthorized' });
     }
 
-    const expenses = await Expense.find({ managerId: userId })
-      .sort({ date: -1 })
-      .limit(50)
-      .lean();
-
-    return res.status(200).json({
-      success: true,
-      data: { expenses, total: expenses.length },
-    });
+    const result = await financeService.getExpenses(userId);
+    res.json(result);
   } catch (error) {
     next(error);
   }
@@ -731,33 +535,8 @@ exports.getBudget = async (req, res, next) => {
       return res.status(401).json({ success: false, message: 'Unauthorized' });
     }
 
-    // Fetch budgets from Budget collection (new system)
-    const budgets = await Budget.find({ managerId: userId, isActive: true });
-
-    // Fetch expenses to calculate spent amounts
-    const expenses = await Expense.find({ managerId: userId }).lean();
-
-    // Calculate spent for each budget from real expenses
-    const budgetsWithSpent = budgets.map(budget => {
-      const spent = expenses
-        .filter(e => e.category === budget.category)
-        .reduce((sum, e) => sum + (e.amount || 0), 0);
-
-      return {
-        id: budget._id,
-        category: budget.category,
-        limit: budget.limit,
-        spent: spent,
-        currency: budget.currency,
-        createdAt: budget.createdAt,
-        updatedAt: budget.updatedAt,
-      };
-    });
-
-    return res.status(200).json({
-      success: true,
-      data: { budget: budgetsWithSpent }
-    });
+    const result = await financeService.getBudget(userId);
+    res.json(result);
   } catch (error) {
     next(error);
   }
@@ -776,50 +555,15 @@ exports.setBudget = async (req, res, next) => {
     }
 
     const { project, amount } = req.body ?? {};
-
-    if (!project || typeof project !== 'string' || !project.trim()) {
-      return res.status(400).json({ success: false, message: 'project requis et valide' });
-    }
-
-    if (amount === undefined || amount === null) {
-      return res.status(400).json({ success: false, message: 'amount requis' });
-    }
-
-    const normalizedAmount = Number(amount);
-    if (!Number.isFinite(normalizedAmount) || normalizedAmount < 0) {
-      return res.status(400).json({ success: false, message: 'amount invalide (doit être >= 0)' });
-    }
-
-    const user = await User.findById(userId);
-    if (!user) {
-      return res.status(404).json({ success: false, message: 'User not found' });
-    }
-
-    // Initialize budget array if not exists
-    if (!Array.isArray(user.budget)) {
-      user.budget = [];
-    }
-
-    // Find or create budget entry
-    const existingIndex = user.budget.findIndex((b) => b.project === project);
-    if (existingIndex >= 0) {
-      user.budget[existingIndex].amount = normalizedAmount;
-    } else {
-      user.budget.push({
-        project: project.trim(),
-        amount: normalizedAmount,
-        spent: 0,
+    const result = await financeService.setBudget(userId, { project, amount });
+    res.json(result);
+  } catch (error) {
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({
+        success: false,
+        message: error.message,
       });
     }
-
-    await user.save();
-
-    return res.status(200).json({
-      success: true,
-      message: 'Budget updated',
-      data: { budget: user.budget },
-    });
-  } catch (error) {
     next(error);
   }
 };
@@ -838,92 +582,16 @@ exports.createBudget = async (req, res, next) => {
     }
 
     const { category, limit, currency } = req.body ?? {};
-
-    // Validate category
-    if (!category || typeof category !== 'string' || !category.trim()) {
-      return res.status(400).json({
-        success: false,
-        message: 'category is required and must be a non-empty string',
-      });
-    }
-
-    const validCategories = ['SaaS', 'Marketing', 'Travel', 'Office', 'Salaries', 'Other'];
-    const normalizedCategory = category.trim();
-    
-    if (!validCategories.includes(normalizedCategory)) {
-      return res.status(400).json({
-        success: false,
-        message: `category must be one of: ${validCategories.join(', ')}`,
-      });
-    }
-
-    // Validate limit
-    if (limit === undefined || limit === null) {
-      return res.status(400).json({ success: false, message: 'limit is required' });
-    }
-
-    const normalizedLimit = Number(limit);
-    if (!Number.isFinite(normalizedLimit) || normalizedLimit <= 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'limit must be a positive number',
-      });
-    }
-
-    // Validate currency
-    const normalizedCurrency = (currency || 'TND').trim().toUpperCase();
-    const validCurrencies = ['TND', 'USD', 'EUR'];
-    
-    if (!validCurrencies.includes(normalizedCurrency)) {
-      return res.status(400).json({
-        success: false,
-        message: `currency must be one of: ${validCurrencies.join(', ')}`,
-      });
-    }
-
-    // Check if budget already exists for this category and manager
-    const existingBudget = await Budget.findOne({
-      managerId: userId,
-      category: normalizedCategory,
-      isActive: true,
-    });
-
-    if (existingBudget) {
-      return res.status(409).json({
-        success: false,
-        message: `Budget for ${normalizedCategory} already exists. Use PUT to update it.`,
-      });
-    }
-
-    // Create new budget
-    const newBudget = await Budget.create({
-      managerId: userId,
-      category: normalizedCategory,
-      limit: normalizedLimit,
-      currency: normalizedCurrency,
-      spent: 0,
-      isActive: true,
-    });
-
-    console.log(`[Kash] Budget created: ${normalizedCategory} - ${normalizedLimit} ${normalizedCurrency}`);
-
-    return res.status(201).json({
-      success: true,
-      message: 'Budget created successfully',
-      data: {
-        budget: {
-          id: newBudget._id,
-          category: newBudget.category,
-          limit: newBudget.limit,
-          spent: newBudget.spent,
-          currency: newBudget.currency,
-          createdAt: newBudget.createdAt,
-        },
-      },
-    });
+    const result = await financeService.createBudget(userId, { category, limit, currency });
+    res.status(201).json(result);
   } catch (error) {
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({
+        success: false,
+        message: error.message,
+      });
+    }
     if (error.code === 11000) {
-      // Duplicate key error
       return res.status(409).json({
         success: false,
         message: 'Budget for this category already exists',
@@ -945,14 +613,8 @@ exports.getReminders = async (req, res, next) => {
       return res.status(401).json({ success: false, message: 'Unauthorized' });
     }
 
-    const reminders = await Reminder.find({ user: userId })
-      .sort({ dueDate: 1 })
-      .lean();
-
-    return res.status(200).json({
-      success: true,
-      data: { reminders },
-    });
+    const result = await financeService.getReminders(userId);
+    res.json(result);
   } catch (error) {
     next(error);
   }
@@ -971,42 +633,15 @@ exports.createReminder = async (req, res, next) => {
     }
 
     const { title, amount, currency = 'TND', dueDate, notes = '', category = 'Other', vendor = '' } = req.body ?? {};
-
-    if (!title || typeof title !== 'string' || !title.trim()) {
-      return res.status(400).json({ success: false, message: 'title requis' });
-    }
-
-    if (amount === undefined || amount === null) {
-      return res.status(400).json({ success: false, message: 'amount requis' });
-    }
-
-    const normalizedAmount = Number(amount);
-    if (!Number.isFinite(normalizedAmount) || normalizedAmount <= 0) {
-      return res.status(400).json({ success: false, message: 'amount invalide (doit être > 0)' });
-    }
-
-    if (!dueDate) {
-      return res.status(400).json({ success: false, message: 'dueDate requis' });
-    }
-
-    const reminder = await Reminder.create({
-      user: userId,
-      title: title.trim(),
-      amount: normalizedAmount,
-      currency: currency || 'TND',
-      dueDate: new Date(dueDate),
-      notes: notes || '',
-      category: category || 'Other',
-      vendor: vendor || '',
-      status: 'pending',
-    });
-
-    return res.status(201).json({
-      success: true,
-      message: 'Reminder created',
-      data: { reminder },
-    });
+    const result = await financeService.createReminder(userId, { title, amount, currency, dueDate, notes, category, vendor });
+    res.status(201).json(result);
   } catch (error) {
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({
+        success: false,
+        message: error.message,
+      });
+    }
     next(error);
   }
 };
@@ -1024,43 +659,15 @@ exports.markReminderPaid = async (req, res, next) => {
       return res.status(401).json({ success: false, message: 'Unauthorized' });
     }
 
-    if (!id) {
-      return res.status(400).json({ success: false, message: 'Reminder ID requis' });
-    }
-
-    const reminder = await Reminder.findOneAndUpdate(
-      { _id: id, user: userId },
-      { status: 'paid', paidAt: new Date() },
-      { new: true }
-    );
-
-    if (!reminder) {
-      return res.status(404).json({ success: false, message: 'Reminder not found' });
-    }
-
-    // Auto-create Expense when manually marking reminder as paid
-    try {
-      await Expense.create({
-        managerId: userId,
-        amount: reminder.amount,
-        currency: reminder.currency,
-        vendor: reminder.vendor || reminder.title,
-        category: reminder.category || 'Other',
-        date: new Date(),
-        description: `Auto-generated from reminder: ${reminder.title}`
-      });
-      console.log(`[Kash] Auto-created expense for reminder: ${reminder._id}`);
-    } catch (expenseErr) {
-      console.warn(`[Kash] Failed to auto-create expense for reminder ${reminder._id}: ${expenseErr.message}`);
-      // Don't fail the API call if auto-expense creation fails
-    }
-
-    return res.status(200).json({
-      success: true,
-      message: 'Reminder marked as paid',
-      data: { reminder },
-    });
+    const result = await financeService.markReminderPaid(userId, id);
+    res.json(result);
   } catch (error) {
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({
+        success: false,
+        message: error.message,
+      });
+    }
     next(error);
   }
 };
@@ -1078,15 +685,8 @@ exports.recalculateBudget = async (req, res, next) => {
       return res.status(401).json({ success: false, message: 'Unauthorized' });
     }
 
-    const updatedUser = await recalculateBudgetSpent(userId);
-
-    return res.status(200).json({
-      success: true,
-      message: 'Budget spent recalculated successfully',
-      data: {
-        budget: updatedUser?.budget || [],
-      },
-    });
+    const result = await financeService.recalculateBudgetForUser(userId);
+    res.json(result);
   } catch (error) {
     next(error);
   }
@@ -1117,7 +717,6 @@ exports.submitEmployeeExpense = async (req, res, next) => {
       });
     }
 
-    // Check if file was uploaded
     if (!req.file) {
       return res.status(400).json({
         success: false,
@@ -1125,305 +724,15 @@ exports.submitEmployeeExpense = async (req, res, next) => {
       });
     }
 
-    // Read file and convert to base64
-    const fileBuffer = req.file.buffer;
-    const base64String = fileBuffer.toString('base64');
-    const mimeType = req.file.mimetype || 'image/png';
-
-    // Prepare inline data for Gemini
-    const inlineData = {
-      base64: normalizeBase64String(base64String),
-      mimeType: mimeType
-    };
-
-    // Analyze receipt with Mistral AI Pixtral
-    let extracted;
-    try {
-      extracted = await analyzeReceiptWithMistral(base64String, mimeType);
-      const validation = validateGeminiExtraction(extracted);
-
-      if (!validation.ok) {
-        return res.status(400).json({
-          success: false,
-          message: validation.message || 'Invalid document analysis'
-        });
-      }
-
-      if (validation.invalidDocument) {
-        return res.status(400).json({
-          success: false,
-          message: validation.error || 'Invalid document'
-        });
-      }
-    } catch (err) {
-      return res.status(502).json({
-        success: false,
-        message: 'Failed to analyze document: ' + err.message
-      });
-    }
-
-    // Find the employee record
-    const employee = await Employee.findById(employeeId).lean();
-    if (!employee) {
-      return res.status(404).json({
-        success: false,
-        message: 'Employee record not found'
-      });
-    }
-
-    // Find the employee's manager (CEO) by email
-    if (!employee.manager_email) {
-      return res.status(400).json({
-        success: false,
-        message: 'Manager email not configured for this employee'
-      });
-    }
-
-    const managerUser = await User.findOne({ email: employee.manager_email }).lean();
-    if (!managerUser) {
-      return res.status(404).json({
-        success: false,
-        message: `Manager (CEO) with email ${employee.manager_email} not found`
-      });
-    }
-
-    const managerId = managerUser._id;
-
-    // Create expense record
-    try {
-      const expense = await Expense.create({
-        managerId: managerId,
-        employeeId: employeeId,
-        amount: extracted.amount,
-        currency: extracted.currency || 'USD',
-        vendor: extracted.vendor || 'Unknown',
-        category: extracted.category || 'Other',
-        description: extracted.description || '',
-        receiptUrl: null, // Could store file URL if using cloud storage
-        status: 'pending',
-        date: extracted.date ? new Date(extracted.date) : new Date(),
-      });
-
-      // Recalculate budget spent for the manager
-      try {
-        const updatedManager = await recalculateBudgetSpent(managerId);
-        
-        // Check if budget alert should be sent
-        if (updatedManager && updatedManager.budget) {
-          const category = extracted.category || 'Other';
-          const matchedBudget = updatedManager.budget.find(b => b.project === category);
-          
-          if (matchedBudget && matchedBudget.amount > 0) {
-            const percentage = (matchedBudget.spent / matchedBudget.amount) * 100;
-            let alertLevel = null;
-            
-            if (percentage >= 100) {
-              alertLevel = 'CRITICAL';
-            } else if (percentage >= 80) {
-              alertLevel = 'WARNING';
-            }
-
-            if (alertLevel) {
-              await sendBudgetAlertEmail(updatedManager, matchedBudget, alertLevel, category);
-            }
-          }
-        }
-      } catch (budgetErr) {
-        console.warn(`[Kash] Failed to recalculate budget for manager: ${budgetErr.message}`);
-        // Don't fail expense creation if budget update fails
-      }
-
-      return res.status(201).json({
-        success: true,
-        message: 'Expense submitted successfully',
-        data: {
-          expense: {
-            id: expense._id,
-            amount: expense.amount,
-            currency: expense.currency,
-            vendor: expense.vendor,
-            category: expense.category,
-            description: expense.description,
-            date: expense.date,
-            status: expense.status,
-          }
-        }
-      });
-    } catch (err) {
-      return res.status(500).json({
-        success: false,
-        message: 'Failed to save expense: ' + err.message
-      });
-    }
+    const result = await financeService.submitEmployeeExpense(employeeId, req.file.buffer, req.file.mimetype || 'image/png');
+    res.status(201).json(result);
   } catch (error) {
-    next(error);
-  }
-};
-
-/**
- * Employee expense submission via file upload
- * POST /api/kash/employee/upload
- * Requires: employee JWT token + multipart file (image/PDF)
- * 
- * Process:
- * 1. Accept image/PDF file via multer
- * 2. Convert to base64
- * 3. Analyze with Gemini AI
- * 4. Find employee's manager_email from Employee collection
- * 5. Find User (CEO) with that email to get managerId
- * 6. Save expense to Expense collection
- * 7. Trigger budget alert if needed
- */
-exports.submitEmployeeExpense = async (req, res, next) => {
-  try {
-    const employeeId = req.employee?.id;
-
-    if (!employeeId) {
-      return res.status(401).json({
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({
         success: false,
-        message: 'Employee token required'
+        message: error.message,
       });
     }
-
-    // Check if file was uploaded
-    if (!req.file) {
-      return res.status(400).json({
-        success: false,
-        message: 'File (image or PDF) is required'
-      });
-    }
-
-    // Read file and convert to base64
-    const fileBuffer = req.file.buffer;
-    const base64String = fileBuffer.toString('base64');
-    const mimeType = req.file.mimetype || 'image/png';
-
-    // Prepare inline data for Gemini
-    const inlineData = {
-      base64: normalizeBase64String(base64String),
-      mimeType: mimeType
-    };
-
-    // Analyze receipt with Mistral AI Pixtral
-    let extracted;
-    try {
-      extracted = await analyzeReceiptWithMistral(base64String, mimeType);
-      const validation = validateGeminiExtraction(extracted);
-
-      if (!validation.ok) {
-        return res.status(400).json({
-          success: false,
-          message: validation.message || 'Invalid document analysis'
-        });
-      }
-
-      if (validation.invalidDocument) {
-        return res.status(400).json({
-          success: false,
-          message: validation.error || 'Invalid document'
-        });
-      }
-    } catch (err) {
-      return res.status(502).json({
-        success: false,
-        message: 'Failed to analyze document: ' + err.message
-      });
-    }
-
-    // Find the employee record
-    const employee = await Employee.findById(employeeId).lean();
-    if (!employee) {
-      return res.status(404).json({
-        success: false,
-        message: 'Employee record not found'
-      });
-    }
-
-    // Find the employee's manager (CEO) by email
-    if (!employee.manager_email) {
-      return res.status(400).json({
-        success: false,
-        message: 'Manager email not configured for this employee'
-      });
-    }
-
-    const managerUser = await User.findOne({ email: employee.manager_email }).lean();
-    if (!managerUser) {
-      return res.status(404).json({
-        success: false,
-        message: `Manager (CEO) with email ${employee.manager_email} not found`
-      });
-    }
-
-    const managerId = managerUser._id;
-
-    // Create expense record
-    try {
-      const expense = await Expense.create({
-        managerId: managerId,
-        employeeId: employeeId,
-        amount: extracted.amount,
-        currency: extracted.currency || 'USD',
-        vendor: extracted.vendor || 'Unknown',
-        category: extracted.category || 'Other',
-        description: extracted.description || '',
-        receiptUrl: null, // Could store file URL if using cloud storage
-        status: 'pending',
-        date: extracted.date ? new Date(extracted.date) : new Date(),
-      });
-
-      // Recalculate budget spent for the manager
-      try {
-        const updatedManager = await recalculateBudgetSpent(managerId);
-        
-        // Check if budget alert should be sent
-        if (updatedManager && updatedManager.budget) {
-          const category = extracted.category || 'Other';
-          const matchedBudget = updatedManager.budget.find(b => b.project === category);
-          
-          if (matchedBudget && matchedBudget.amount > 0) {
-            const percentage = (matchedBudget.spent / matchedBudget.amount) * 100;
-            let alertLevel = null;
-            
-            if (percentage >= 100) {
-              alertLevel = 'CRITICAL';
-            } else if (percentage >= 80) {
-              alertLevel = 'WARNING';
-            }
-
-            if (alertLevel) {
-              await sendBudgetAlertEmail(updatedManager, matchedBudget, alertLevel, category);
-            }
-          }
-        }
-      } catch (budgetErr) {
-        console.warn(`[Kash] Failed to recalculate budget for manager: ${budgetErr.message}`);
-        // Don't fail expense creation if budget update fails
-      }
-
-      return res.status(201).json({
-        success: true,
-        message: 'Expense submitted successfully',
-        data: {
-          expense: {
-            id: expense._id,
-            amount: expense.amount,
-            currency: expense.currency,
-            vendor: expense.vendor,
-            category: expense.category,
-            description: expense.description,
-            date: expense.date,
-            status: expense.status,
-          }
-        }
-      });
-    } catch (err) {
-      return res.status(500).json({
-        success: false,
-        message: 'Failed to save expense: ' + err.message
-      });
-    }
-  } catch (error) {
     next(error);
   }
 };
@@ -1441,66 +750,178 @@ exports.checkHiringFeasibility = async (req, res, next) => {
       return res.status(401).json({ success: false, message: 'Unauthorized' });
     }
 
-    if (!salary || isNaN(salary) || salary <= 0) {
+    const result = await financeService.checkHiringFeasibility(userId, salary);
+    res.json(result);
+  } catch (error) {
+    if (error.statusCode) {
+      return res.status(error.statusCode).json({
+        success: false,
+        message: error.message,
+      });
+    }
+    next(error);
+  }
+};
+exports.staffingCostAnalysis = async (req, res) => {
+  try {
+    const result = await financeService.staffingCostAnalysis(req.body);
+    res.json(result);
+  } catch (err) {
+    if (err.statusCode) {
+      return res.status(err.statusCode).json({
+        success: false,
+        message: err.message,
+      });
+    }
+    res.status(500).json({
+      success: false,
+      error: err.message,
+    });
+  }
+};
+exports.staffingAllocationAnalysis = async (req, res) => {
+  try {
+    const { userId, needs = [] } = req.body;
+
+    if (!userId || !Array.isArray(needs) || needs.length === 0) {
       return res.status(400).json({
         success: false,
-        message: 'Valid salary parameter required',
+        message: 'userId et needs requis',
       });
     }
 
-    const salaryAmount = parseFloat(salary);
+    const salariesBudget = await Budget.findOne({
+      managerId: userId,
+      category: 'Salaries',
+      isActive: true,
+    }).lean();
 
-    try {
-      // Find the Salaries budget for this user
-      const salariesBudget = await Budget.findOne({
-        managerId: userId,
-        category: 'Salaries',
-        isActive: true,
-      }).lean();
+    if (!salariesBudget) {
+      return res.json({
+        success: true,
+        allocation: {
+          approved: [],
+          blocked: needs.map(n => ({
+            department: n.department,
+            requested: Number(n.missing || 0),
+            blocked: Number(n.missing || 0),
+            reason: 'Aucun budget Salaries trouvé',
+          })),
+          budget: null,
+          recommendation: 'Créer un budget Salaries avant de recruter.',
+        },
+      });
+    }
 
-      if (!salariesBudget) {
-        return res.status(404).json({
-          success: false,
-          message: 'Salaries budget not found. Please set up a Salaries budget first.',
+    const priorities = {
+      Tech: 5,
+      Finance: 4,
+      Operations: 3,
+      Marketing: 2,
+      Other: 1,
+    };
+
+    let remainingBudget = salariesBudget.limit - salariesBudget.spent;
+
+    const enrichedNeeds = [];
+
+    for (const need of needs) {
+      const department = need.department;
+      const missing = Number(need.missing || 0);
+
+      if (!department || missing <= 0) continue;
+
+      const employees = await Employee.find({
+        ceo_id: userId,
+        department,
+        status: 'active',
+      })
+        .select('+salary')
+        .lean();
+
+      const salaries = employees
+        .map(e => Number(e.salary || 0))
+        .filter(s => s > 0);
+
+      const avgSalary =
+        salaries.length > 0
+          ? salaries.reduce((sum, s) => sum + s, 0) / salaries.length
+          : 2500;
+
+      enrichedNeeds.push({
+        department,
+        requested: missing,
+        avgSalary,
+        priority: priorities[department] || priorities.Other,
+      });
+    }
+
+    // priorité 1 : donner au moins 1 recrutement aux départements critiques
+    enrichedNeeds.sort((a, b) => b.priority - a.priority);
+
+    const approved = [];
+    const blocked = [];
+
+    for (const need of enrichedNeeds) {
+      let approvedCount = 0;
+
+      for (let i = 0; i < need.requested; i++) {
+        if (remainingBudget >= need.avgSalary) {
+          approvedCount += 1;
+          remainingBudget -= need.avgSalary;
+        } else {
+          break;
+        }
+      }
+
+      if (approvedCount > 0) {
+        approved.push({
+          department: need.department,
+          requested: need.requested,
+          approved: approvedCount,
+          avgSalary: need.avgSalary,
+          estimatedCost: approvedCount * need.avgSalary,
+          priority: need.priority,
         });
       }
 
-      const remainingBudget = salariesBudget.limit - salariesBudget.spent;
-      const canAfford = remainingBudget >= salaryAmount;
+      const blockedCount = need.requested - approvedCount;
 
-      const response = {
-        success: true,
-        canAfford,
-        salary: salaryAmount,
-        budgetDetails: {
-          category: salariesBudget.category,
-          totalBudget: salariesBudget.limit,
+      if (blockedCount > 0) {
+        blocked.push({
+          department: need.department,
+          requested: need.requested,
+          blocked: blockedCount,
+          avgSalary: need.avgSalary,
+          missingBudget: Math.max(0, need.avgSalary * blockedCount - remainingBudget),
+          reason: 'Budget Salaries insuffisant',
+          priority: need.priority,
+        });
+      }
+    }
+
+    return res.json({
+      success: true,
+      allocation: {
+        approved,
+        blocked,
+        budget: {
+          limit: salariesBudget.limit,
           spent: salariesBudget.spent,
-          remaining: remainingBudget,
+          initialRemaining: salariesBudget.limit - salariesBudget.spent,
+          finalRemaining: remainingBudget,
           currency: salariesBudget.currency,
         },
-        message: canAfford
-          ? `✅ Organization can afford to hire (Remaining budget: ${remainingBudget.toFixed(2)} ${salariesBudget.currency})`
-          : `❌ Organization cannot afford this salary (Shortfall: ${(salaryAmount - remainingBudget).toFixed(2)} ${salariesBudget.currency})`,
-        hiring: {
-          feasible: canAfford,
-          projectedNewSpent: salariesBudget.spent + salaryAmount,
-          percentageAfterHiring: (((salariesBudget.spent + salaryAmount) / salariesBudget.limit) * 100).toFixed(2),
-        },
-      };
-
-      if (!canAfford) {
-        response.suggestion = `Consider reducing salary to ${remainingBudget.toFixed(2)} ${salariesBudget.currency} or increasing the Salaries budget.`;
-      }
-
-      return res.status(200).json(response);
-    } catch (err) {
-      return res.status(500).json({
-        success: false,
-        message: `Failed to check hiring feasibility: ${err.message}`,
-      });
-    }
-  } catch (error) {
-    next(error);
+        recommendation:
+          approved.length > 0
+            ? `Kash recommande de lancer ${approved.reduce((s, a) => s + a.approved, 0)} recrutement(s) selon la priorité métier.`
+            : 'Kash bloque tous les recrutements : budget Salaries insuffisant.',
+      },
+    });
+  } catch (err) {
+    res.status(500).json({
+      success: false,
+      error: err.message,
+    });
   }
 };

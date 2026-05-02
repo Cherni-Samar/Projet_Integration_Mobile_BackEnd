@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
-const echoAgent = require('../services/echoAgent');
-const groqAgent = require('../services/groqAgent');
-const inboxStatsService = require('../services/inboxStatsService');
+const echoAgent = require('../agents/Echoagent');
+const groqAgent = require('../services/shared/groqAgent');
+const inboxStatsService = require('../services/echo/inboxStatsService');
 const InboxEmail = require('../models/InboxEmail');
 
 // 🔹 ECHO

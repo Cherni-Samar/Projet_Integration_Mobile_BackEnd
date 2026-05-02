@@ -61,15 +61,18 @@ const productCampaignSchema = new mongoose.Schema({
   timestamps: true
 });
 
+// Index for efficient queries
 productCampaignSchema.index({ status: 1, nextPostAt: 1 });
 productCampaignSchema.index({ createdAt: -1 });
 
+// Method to check if it's time to post
 productCampaignSchema.methods.isTimeToPost = function() {
   if (this.status !== 'active') return false;
-  if (!this.nextPostAt) return true;
+  if (!this.nextPostAt) return true; // First post
   return new Date() >= this.nextPostAt;
 };
 
+// Method to calculate next post time
 productCampaignSchema.methods.calculateNextPostTime = function() {
   const now = new Date();
   let hoursToAdd;
@@ -91,6 +94,7 @@ productCampaignSchema.methods.calculateNextPostTime = function() {
   return new Date(now.getTime() + hoursToAdd * 60 * 60 * 1000);
 };
 
+// Method to update after posting
 productCampaignSchema.methods.updateAfterPost = async function() {
   this.lastPostAt = new Date();
   this.nextPostAt = this.calculateNextPostTime();
@@ -98,6 +102,7 @@ productCampaignSchema.methods.updateAfterPost = async function() {
   await this.save();
 };
 
+// Static method to get active campaigns ready to post
 productCampaignSchema.statics.getReadyToPost = async function() {
   const now = new Date();
   return this.find({
