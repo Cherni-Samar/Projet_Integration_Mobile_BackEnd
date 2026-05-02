@@ -1,22 +1,45 @@
 const nodemailer = require('nodemailer');
 
-// Configuration du transporteur email
-// Render bloque le port 587 — on utilise le port 465 (SSL) en production
+// ══════════════════════════════════════════════════════════════
+// TRANSPORT EMAIL — Resend (HTTP) en production, SMTP en local
+// Render bloque SMTP (ports 465/587) → on utilise Resend API
+// ══════════════════════════════════════════════════════════════
+
+// Fonction d'envoi universelle : Resend si clé dispo, sinon SMTP
+async function sendEmail({ from, to, subject, html }) {
+  // ── Resend (production Render) ──
+  if (process.env.RESEND_API_KEY) {
+    const { Resend } = require('resend');
+    const resend = new Resend(process.env.RESEND_API_KEY);
+    const fromAddr = process.env.RESEND_FROM || 'E-Team RH <onboarding@resend.dev>';
+    const result = await resend.emails.send({ from: fromAddr, to, subject, html });
+    if (result.error) throw new Error(result.error.message || JSON.stringify(result.error));
+    return { messageId: result.data?.id || 'resend-ok', accepted: [to] };
+  }
+
+  // ── SMTP fallback (développement local) ──
+  const port = parseInt(process.env.EMAIL_PORT) || 587;
+  const transporter = nodemailer.createTransport({
+    host: process.env.EMAIL_HOST || 'smtp.gmail.com',
+    port,
+    secure: port === 465,
+    auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
+    tls: { rejectUnauthorized: false }
+  });
+  await transporter.verify();
+  const info = await transporter.sendMail({ from, to, subject, html });
+  return { messageId: info.messageId, accepted: info.accepted };
+}
+
+// Garde createTransporter pour compatibilité avec les autres fonctions du fichier
 const createTransporter = () => {
   const port = parseInt(process.env.EMAIL_PORT) || 587;
-  const isSSL = port === 465;
-
   return nodemailer.createTransport({
     host: process.env.EMAIL_HOST || 'smtp.gmail.com',
-    port: port,
-    secure: isSSL,           // true pour 465, false pour 587
-    auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS,
-    },
-    tls: {
-      rejectUnauthorized: false  // évite les erreurs de certificat sur Render
-    }
+    port,
+    secure: port === 465,
+    auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
+    tls: { rejectUnauthorized: false }
   });
 };
 
@@ -371,72 +394,44 @@ const sendStaffingAlert = async (targetEmail, details) => {
 // 1. Pour confirmer la réception simple
 const sendCandidacyConfirmation = async (email, name) => {
   try {
-    // ── Vérification variables SMTP avant envoi ──
-    if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-      console.error('❌ [EMAIL] EMAIL_USER ou EMAIL_PASS manquant dans les variables d\'environnement !');
-      console.error('❌ [EMAIL] Sur Render : va dans Settings → Environment → ajoute EMAIL_USER et EMAIL_PASS');
+    if (!process.env.RESEND_API_KEY && (!process.env.EMAIL_USER || !process.env.EMAIL_PASS)) {
+      console.error('❌ [EMAIL] Aucune config email (RESEND_API_KEY ou EMAIL_USER/PASS manquant)');
       return false;
     }
-
-    console.log(`📧 [EMAIL] Tentative envoi confirmation à : ${email}`);
-    console.log(`📧 [EMAIL] Depuis : ${process.env.EMAIL_USER}`);
-    console.log(`📧 [EMAIL] SMTP : ${process.env.EMAIL_HOST}:${process.env.EMAIL_PORT}`);
-
-    const transporter = createTransporter();
-
-    // Vérifier la connexion SMTP avant d'envoyer
-    await transporter.verify();
-    console.log('📧 [EMAIL] Connexion SMTP OK');
-
-    const info = await transporter.sendMail({
-      from: `"E-Team RH" <${process.env.EMAIL_USER}>`,
+    console.log(`📧 [EMAIL] Envoi confirmation à : ${email}`);
+    const info = await sendEmail({
+      from: `"E-Team RH" <${process.env.EMAIL_USER || 'noreply@e-team.com'}>`,
       to: email,
       subject: '📩 Confirmation de réception : Votre candidature chez E-Team',
       html: `
         <div style="font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; max-width: 600px; margin: auto; border: 1px solid #eee; border-radius: 15px; padding: 30px; color: #1a1a1a;">
-          
           <div style="text-align: center; margin-bottom: 25px;">
             <span style="font-size: 22px; font-weight: bold; color: #000; letter-spacing: 1px;">E-TEAM <span style="color: #CCFF00;">•</span> RECRUTEMENT</span>
           </div>
-          
           <h2 style="font-size: 18px; color: #333;">Bonjour ${name},</h2>
-          
           <p style="font-size: 15px; line-height: 1.6; color: #555;">
             Nous vous confirmons avoir bien reçu votre candidature pour rejoindre nos équipes.
           </p>
-          
           <div style="background-color: #f9f9f9; border-left: 4px solid #ccc; padding: 20px; margin: 25px 0;">
             <p style="margin: 0; font-size: 14px; color: #666; line-height: 1.5;">
               <b>Statut actuel :</b> Étude de votre dossier.<br>
-              Votre profil est actuellement examiné par notre département des Ressources Humaines afin d'évaluer la correspondance avec nos besoins actuels.
+              Votre profil est actuellement examiné par notre département RH.
             </p>
           </div>
-
           <p style="font-size: 15px; line-height: 1.6; color: #555;">
-            Si votre profil est retenu pour la prochaine étape, vous recevrez une invitation pour une session de découverte avec nos équipes. Dans le cas contraire, nous conserverons votre profil dans notre base de données pour d'éventuelles opportunités futures.
+            Si votre profil est retenu, vous recevrez une invitation pour un entretien IA.
           </p>
-
-          <p style="font-size: 15px; margin-top: 30px; color: #000; font-weight: bold;">
-            Merci de votre intérêt pour E-Team.
-          </p>
-          
+          <p style="font-size: 15px; margin-top: 30px; color: #000; font-weight: bold;">Merci de votre intérêt pour E-Team.</p>
           <hr style="border: 0; border-top: 1px solid #eee; margin: 30px 0;">
-          
-          <p style="text-align: center; color: #aaa; font-size: 11px;">
-            Ceci est un message envoyé par le département RH de E-Team.<br>
-            © 2026 E-Team - Gestion des Talents.
-          </p>
+          <p style="text-align: center; color: #aaa; font-size: 11px;">© 2026 E-Team - Gestion des Talents.</p>
         </div>
       `
     });
-    console.log(`✅ [EMAIL] Confirmation envoyée à ${email} — MessageID: ${info.messageId}`);
+    console.log(`✅ [EMAIL] Confirmation envoyée à ${email} — ID: ${info.messageId}`);
     return true;
-  } catch (e) { 
-    console.error(`❌ [EMAIL] ERREUR envoi confirmation à ${email}:`);
-    console.error(`❌ [EMAIL] Message : ${e.message}`);
-    console.error(`❌ [EMAIL] Code    : ${e.code}`);
-    console.error(`❌ [EMAIL] Response: ${e.response}`);
-    return false; 
+  } catch (e) {
+    console.error(`❌ [EMAIL] Erreur confirmation → ${email} : ${e.message}`);
+    return false;
   }
 };
 // ✅ RECYCLAGE DE TON ANCIEN MAIL

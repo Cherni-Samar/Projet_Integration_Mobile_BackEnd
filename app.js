@@ -120,57 +120,61 @@ app.get('/api/diagnostic', async (req, res) => {
 
   // ── Test SMTP connexion ──
   try {
-    const nodemailer = require('nodemailer');
-    const transporter = nodemailer.createTransport({
-      host: process.env.EMAIL_HOST || 'smtp.gmail.com',
-      port: parseInt(process.env.EMAIL_PORT) || 587,
-      secure: false,
-      auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS }
-    });
-    await transporter.verify();
-    results.smtp = { status: '✅ connexion SMTP OK' };
-
-    // ── Test envoi email réel ──
-    try {
+    // Si Resend configuré → tester Resend directement
+    if (process.env.RESEND_API_KEY) {
+      const { Resend } = require('resend');
+      const resend = new Resend(process.env.RESEND_API_KEY);
       const testEmail = req.query.email || process.env.EMAIL_USER;
-      const info = await transporter.sendMail({
-        from: `"E-Team Diagnostic" <${process.env.EMAIL_USER}>`,
-        to: testEmail,
-        subject: '🔧 [DIAGNOSTIC] Test email Render — E-Team',
-        html: `
-          <div style="font-family:sans-serif;padding:20px;border:2px solid #CCFF00;border-radius:12px;max-width:500px;">
-            <h2 style="color:#000;">✅ Email Render fonctionne !</h2>
-            <p>Cet email confirme que le serveur Render peut envoyer des emails.</p>
-            <p><b>Serveur :</b> ${process.env.PUBLIC_BASE_URL || 'Render'}</p>
-            <p><b>SMTP :</b> ${process.env.EMAIL_HOST}:${process.env.EMAIL_PORT}</p>
-            <p><b>Expéditeur :</b> ${process.env.EMAIL_USER}</p>
+      const fromAddr = process.env.RESEND_FROM || 'E-Team <onboarding@resend.dev>';
+      results.smtp = { status: '✅ Resend API configuré (pas de SMTP)' };
+      try {
+        const r = await resend.emails.send({
+          from: fromAddr,
+          to: testEmail,
+          subject: '🔧 [DIAGNOSTIC] Test email Render — E-Team',
+          html: `<div style="font-family:sans-serif;padding:20px;border:2px solid #CCFF00;border-radius:12px;">
+            <h2>✅ Email Render fonctionne via Resend !</h2>
+            <p><b>Serveur :</b> ${process.env.PUBLIC_BASE_URL}</p>
             <p><b>Heure :</b> ${new Date().toLocaleString('fr-FR')}</p>
-            <hr>
-            <p style="color:#888;font-size:12px;">Test automatique E-Team Diagnostic</p>
-          </div>
-        `
+          </div>`
+        });
+        if (r.error) throw new Error(r.error.message);
+        results.email_send = { status: '✅ email envoyé via Resend', to: testEmail, id: r.data?.id };
+      } catch (sendErr) {
+        results.email_send = { status: '❌ échec Resend', error: sendErr.message };
+      }
+    } else {
+      // Fallback SMTP
+      const nodemailer = require('nodemailer');
+      const transporter = nodemailer.createTransport({
+        host: process.env.EMAIL_HOST || 'smtp.gmail.com',
+        port: parseInt(process.env.EMAIL_PORT) || 587,
+        secure: parseInt(process.env.EMAIL_PORT) === 465,
+        auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
+        tls: { rejectUnauthorized: false }
       });
-      results.email_send = {
-        status: '✅ email envoyé',
-        to: testEmail,
-        messageId: info.messageId,
-        accepted: info.accepted
-      };
-    } catch (sendErr) {
-      results.email_send = {
-        status: '❌ échec envoi',
-        error: sendErr.message,
-        code: sendErr.code,
-        response: sendErr.response
-      };
+      await transporter.verify();
+      results.smtp = { status: '✅ connexion SMTP OK' };
+      const testEmail = req.query.email || process.env.EMAIL_USER;
+      try {
+        const info = await transporter.sendMail({
+          from: `"E-Team Diagnostic" <${process.env.EMAIL_USER}>`,
+          to: testEmail,
+          subject: '🔧 [DIAGNOSTIC] Test email Render — E-Team',
+          html: `<div style="padding:20px;border:2px solid #CCFF00;border-radius:12px;">
+            <h2>✅ Email Render fonctionne !</h2>
+            <p><b>SMTP :</b> ${process.env.EMAIL_HOST}:${process.env.EMAIL_PORT}</p>
+            <p><b>Heure :</b> ${new Date().toLocaleString('fr-FR')}</p>
+          </div>`
+        });
+        results.email_send = { status: '✅ email envoyé via SMTP', to: testEmail, messageId: info.messageId };
+      } catch (sendErr) {
+        results.email_send = { status: '❌ échec envoi SMTP', error: sendErr.message, code: sendErr.code };
+      }
     }
   } catch (smtpErr) {
-    results.smtp = {
-      status: '❌ connexion SMTP échouée',
-      error: smtpErr.message,
-      code: smtpErr.code
-    };
-    results.email_send = { status: '⏭️ ignoré (SMTP KO)' };
+    results.smtp = { status: '❌ SMTP échoué — utilise Resend à la place', error: smtpErr.message, code: smtpErr.code };
+    results.email_send = { status: '⏭️ ignoré', hint: 'Ajoute RESEND_API_KEY sur Render' };
   }
 
   // ── Test Groq ──
