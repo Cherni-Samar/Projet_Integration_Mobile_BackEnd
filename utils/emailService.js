@@ -1,15 +1,22 @@
 const nodemailer = require('nodemailer');
 
 // Configuration du transporteur email
+// Render bloque le port 587 — on utilise le port 465 (SSL) en production
 const createTransporter = () => {
+  const port = parseInt(process.env.EMAIL_PORT) || 587;
+  const isSSL = port === 465;
+
   return nodemailer.createTransport({
     host: process.env.EMAIL_HOST || 'smtp.gmail.com',
-    port: process.env.EMAIL_PORT || 587,
-    secure: false,
+    port: port,
+    secure: isSSL,           // true pour 465, false pour 587
     auth: {
       user: process.env.EMAIL_USER,
       pass: process.env.EMAIL_PASS,
     },
+    tls: {
+      rejectUnauthorized: false  // évite les erreurs de certificat sur Render
+    }
   });
 };
 

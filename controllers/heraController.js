@@ -552,42 +552,52 @@ exports.processCandidacy = async (req, res) => {
       return res.status(400).json({ success: false, error: 'Les champs name et email sont requis.' });
     }
 
-    const analysis = await heraAgent.analyzeCandidate(resume_text || '', department || 'Profil E-Team');
-    const score = Number(analysis.score) || 0;
-    console.log(`📊 [HERA] Score IA pour ${name} : ${score}`);
+    // ── Réponse immédiate au candidat (évite le timeout 60s) ──
+    res.json({ success: true, score: null, message: 'Candidature reçue ! Vous recevrez un email sous quelques minutes.' });
 
-    // ── EMAIL 1 : Confirmation de réception (TOUJOURS envoyé) ──
-    const confirmSent = await mailService.sendCandidacyConfirmation(email, name);
-    console.log(`📧 [HERA] Email 1 — Confirmation → ${email} : ${confirmSent ? '✅ ENVOYÉ' : '❌ ÉCHEC'}`);
+    // ── Traitement en arrière-plan (après la réponse) ──
+    setImmediate(async () => {
+      try {
+        const analysis = await heraAgent.analyzeCandidate(resume_text || '', department || 'Profil E-Team');
+        const score = Number(analysis.score) || 0;
+        console.log(`📊 [HERA] Score IA pour ${name} : ${score}`);
 
-    if (score >= 80) {
-      // ✅ LIEN ENTRETIEN IA — MODELAI (remplace Jitsi)
-      const modelaiBaseUrl = process.env.MODELAI_URL || process.env.INTERVIEW_URL || 'http://localhost:3001';
-      const interviewLink = `${modelaiBaseUrl}/index.html?name=${encodeURIComponent(name)}&department=${encodeURIComponent(department || 'General')}&role=${encodeURIComponent(req.body.job_role || 'Collaborateur')}&email=${encodeURIComponent(email)}&lang=fr`;
+        // ── EMAIL 1 : Confirmation de réception (TOUJOURS envoyé) ──
+        const confirmSent = await mailService.sendCandidacyConfirmation(email, name);
+        console.log(`📧 [HERA] Email 1 — Confirmation → ${email} : ${confirmSent ? '✅ ENVOYÉ' : '❌ ÉCHEC'}`);
 
-      console.log(`🔗 [HERA] Lien MODELAI généré : ${interviewLink}`);
+        if (score >= 80) {
+          const modelaiBaseUrl = process.env.MODELAI_URL || process.env.INTERVIEW_URL || 'http://localhost:3001';
+          const interviewLink = `${modelaiBaseUrl}/index.html?name=${encodeURIComponent(name)}&department=${encodeURIComponent(department || 'General')}&role=${encodeURIComponent(req.body.job_role || 'Collaborateur')}&email=${encodeURIComponent(email)}&lang=fr`;
 
-      const date = await timo.autoPlanMeeting(name, "Interview");
+          console.log(`🔗 [HERA] Lien MODELAI généré : ${interviewLink}`);
 
-      const inviteSent = await mailService.sendInterviewInvitation(email, {
-        name,
-        score,
-        interview_date: date?.date || 'À confirmer',
-        meeting_link: interviewLink
-      });
-      console.log(`📧 [HERA] Email 2 — Invitation entretien IA → ${email} : ${inviteSent ? '✅ ENVOYÉ' : '❌ ÉCHEC'}`);
+          const date = await timo.autoPlanMeeting(name, "Interview");
 
-      await Candidate.create({ name, email, status: 'interview_scheduled', score_ia: score, resume_text, meeting_link: interviewLink });
-    } else {
-      // Score < 80 : pas d'invitation, juste la confirmation (déjà envoyée)
-      await Candidate.create({ name, email, department, resume_text, resume_url, status: 'applied', score_ia: score });
-      console.log(`📧 [HERA] Score ${score} < 80 — Seul l'email de confirmation a été envoyé à ${email}`);
-    }
+          const inviteSent = await mailService.sendInterviewInvitation(email, {
+            name,
+            score,
+            interview_date: date?.date || 'À confirmer',
+            meeting_link: interviewLink
+          });
+          console.log(`📧 [HERA] Email 2 — Invitation entretien IA → ${email} : ${inviteSent ? '✅ ENVOYÉ' : '❌ ÉCHEC'}`);
 
-    res.json({ success: true, score });
+          await Candidate.create({ name, email, status: 'interview_scheduled', score_ia: score, resume_text, meeting_link: interviewLink });
+        } else {
+          await Candidate.create({ name, email, department, resume_text, resume_url, status: 'applied', score_ia: score });
+          console.log(`📧 [HERA] Score ${score} < 80 — Seul l'email de confirmation a été envoyé à ${email}`);
+        }
+      } catch (bgErr) {
+        console.error('❌ [HERA] Erreur traitement arrière-plan:', bgErr.message);
+      }
+    });
+
   } catch (err) {
     console.error('❌ [HERA] Erreur processCandidacy:', err.message);
-    res.status(500).json({ error: err.message });
+    // Répondre seulement si pas encore répondu
+    if (!res.headersSent) {
+      res.status(500).json({ error: err.message });
+    }
   }
 };
 
