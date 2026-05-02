@@ -486,69 +486,67 @@ const sendGroupMeetingInvitation = async (email, details) => {
 };
 const sendInterviewInvitation = async (email, details) => {
   try {
-    console.log(`📧 [EMAIL] Envoi invitation entretien IA → ${email} (score: ${details.score})`);
+    console.log(`📧 [EMAIL] Envoi invitation entretien → ${email} (score: ${details.score})`);
     const info = await sendEmail({
       from: `"E-Team RH" <${process.env.EMAIL_USER || 'noreply@e-team.com'}>`,
       to: email,
-      subject: '🤖 Invitation à votre entretien IA - E-Team',
+      subject: 'Invitation à votre entretien - E-Team',
       html: `
-        <div style="font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; max-width: 600px; margin: auto; border-radius: 16px; overflow: hidden; color: #1a1a1a; background-color: #ffffff; border: 1px solid #e1e1e1;">
+        <div style="font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; max-width: 600px; margin: auto; color: #1a1a1a; background-color: #ffffff; border: 1px solid #e1e1e1;">
 
           <!-- Header -->
           <div style="background-color: #0A0A0A; padding: 36px; text-align: center;">
             <span style="font-size: 26px; font-weight: bold; color: #CCFF00; letter-spacing: 2px;">E-TEAM</span>
-            <p style="color: #ffffff; font-size: 13px; margin-top: 8px; opacity: 0.7; text-transform: uppercase; letter-spacing: 1px;">Recrutement Intelligent</p>
           </div>
 
           <!-- Body -->
-          <div style="padding: 36px;">
-            <h2 style="font-size: 20px; color: #000; margin-top: 0;">Félicitations ${details.name} ! 🎉</h2>
+          <div style="padding: 40px 36px;">
+            <h2 style="font-size: 20px; color: #000; margin-top: 0; font-weight: 600;">Félicitations ${details.name},</h2>
 
             <p style="font-size: 15px; line-height: 1.7; color: #444;">
-              Votre candidature a été analysée par notre système IA et votre profil a obtenu un
-              <b style="color: #000;">score de ${details.score}/100</b>. Vous êtes sélectionné(e) pour passer à l'étape suivante.
+              Votre candidature a été analysée et votre profil a obtenu un score de
+              <strong style="color: #000;">${details.score}/100</strong>.
+              Vous êtes sélectionné(e) pour passer à l'étape suivante du processus de recrutement.
             </p>
 
             <p style="font-size: 15px; line-height: 1.7; color: #444;">
-              Nous vous invitons à un <b>entretien individuel conduit par Alex</b>, notre agent recruteur IA.
-              L'entretien dure environ <b>10 à 15 minutes</b> et se déroule entièrement en ligne.
+              Nous vous invitons à un entretien individuel en ligne d'une durée de 10 à 15 minutes.
             </p>
 
             <!-- Info box -->
-            <div style="background-color: #f8f9fa; border-left: 4px solid #CCFF00; padding: 20px; margin: 28px 0; border-radius: 8px;">
-              <p style="margin: 0 0 10px 0; font-weight: bold; color: #000; text-transform: uppercase; font-size: 11px; letter-spacing: 1px;">📅 Date prévue :</p>
-              <p style="margin: 0 0 18px 0; font-size: 15px; color: #333;">${details.interview_date}</p>
+            <div style="background-color: #f8f9fa; border-left: 4px solid #CCFF00; padding: 24px; margin: 28px 0;">
+              <p style="margin: 0 0 6px 0; font-weight: bold; color: #000; text-transform: uppercase; font-size: 11px; letter-spacing: 1px;">Date prévue</p>
+              <p style="margin: 0 0 24px 0; font-size: 16px; color: #333; font-weight: 500;">${details.interview_date}</p>
 
-              <p style="margin: 0 0 10px 0; font-weight: bold; color: #000; text-transform: uppercase; font-size: 11px; letter-spacing: 1px;">🤖 Accéder à votre entretien IA :</p>
-              <div style="text-align: center; margin-top: 12px;">
+              <p style="margin: 0 0 12px 0; font-weight: bold; color: #000; text-transform: uppercase; font-size: 11px; letter-spacing: 1px;">Accéder à votre entretien</p>
+              <div style="text-align: center; margin-top: 8px;">
                 <a href="${details.meeting_link}"
-                   style="display: inline-block; background-color: #CCFF00; color: #000; padding: 14px 28px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 15px; letter-spacing: 0.5px;">
-                  🚀 Démarrer mon entretien
+                   style="display: inline-block; background-color: #CCFF00; color: #000; padding: 14px 32px; text-decoration: none; font-weight: bold; font-size: 15px; letter-spacing: 0.5px;">
+                  Démarrer l'entretien
                 </a>
               </div>
             </div>
 
             <!-- Instructions -->
-            <div style="background-color: #fff8e1; border: 1px solid #ffe082; border-radius: 8px; padding: 16px; margin-bottom: 24px;">
-              <p style="margin: 0 0 8px 0; font-weight: bold; color: #000; font-size: 13px;">⚠️ Avant de commencer :</p>
-              <ul style="margin: 0; padding-left: 18px; color: #555; font-size: 13px; line-height: 1.8;">
-                <li>Autorisez l'accès à votre <b>microphone</b></li>
-                <li>Choisissez un endroit calme et bien éclairé</li>
-                <li>Préparez votre CV et vos expériences à présenter</li>
-                <li>L'entretien comporte <b>12 questions</b> en 4 phases</li>
+            <div style="border: 1px solid #e8e8e8; padding: 20px; margin-bottom: 28px;">
+              <p style="margin: 0 0 12px 0; font-weight: bold; color: #000; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;">Avant de commencer</p>
+              <ul style="margin: 0; padding-left: 18px; color: #555; font-size: 14px; line-height: 2;">
+                <li>Autorisez l'accès à votre microphone</li>
+                <li>Choisissez un endroit calme</li>
+                <li>L'entretien comporte 12 questions en 4 phases</li>
               </ul>
             </div>
 
-            <p style="font-size: 14px; color: #666;">Ce lien est personnel et unique. Ne le partagez pas.</p>
-            <p style="margin-bottom: 0; font-size: 15px; color: #000;">À très bientôt,</p>
-            <p style="margin-top: 5px; font-weight: bold; color: #A855F7;">Hera — Agent RH E-Team</p>
+            <p style="font-size: 13px; color: #888;">Ce lien est personnel. Ne le partagez pas.</p>
+
+            <p style="margin-bottom: 4px; font-size: 15px; color: #000;">Cordialement,</p>
+            <p style="margin-top: 0; font-weight: bold; color: #000;">L'équipe RH — E-Team</p>
           </div>
 
           <!-- Footer -->
           <div style="background-color: #f4f4f4; padding: 18px; text-align: center; border-top: 1px solid #eee;">
             <p style="margin: 0; color: #999; font-size: 11px;">
-              © 2026 E-Team Intelligence RH — Message automatique<br>
-              Propulsé par <b style="color: #CCFF00; background:#0A0A0A; padding: 1px 5px; border-radius:3px;">MODELAI</b> — Agent d'entretien IA
+              © 2026 E-Team — Message automatique
             </p>
           </div>
         </div>`
