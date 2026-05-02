@@ -915,6 +915,72 @@ const sendHeraDocumentEmail = async (toEmail, docData) => {
   }
 };
 
+// Notification de licenciement envoyée à l'employé concerné
+const sendLayoffNoticeEmail = async (email, { employee_name, layoff_date }) => {
+  try {
+    const transporter = createTransporter();
+
+    const mailOptions = {
+      from: `"Hera (E-Team RH)" <${process.env.EMAIL_USER}>`,
+      to: email,
+      subject: `📋 Notification de fin de contrat — E-Team`,
+      html: `
+        <div style="font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; max-width: 600px; margin: auto; border: 1px solid #e1e1e1; border-radius: 16px; overflow: hidden; color: #1a1a1a; background-color: #ffffff;">
+
+          <!-- Header -->
+          <div style="background-color: #0A0A0A; padding: 36px; text-align: center;">
+            <span style="font-size: 26px; font-weight: bold; color: #CCFF00; letter-spacing: 2px;">E-TEAM</span>
+            <p style="color: #ffffff; font-size: 13px; margin-top: 8px; opacity: 0.7; text-transform: uppercase;">Service des Ressources Humaines</p>
+          </div>
+
+          <!-- Body -->
+          <div style="padding: 40px 36px;">
+            <h2 style="font-size: 20px; color: #000; margin-top: 0;">Bonjour ${employee_name},</h2>
+
+            <p style="font-size: 15px; line-height: 1.7; color: #444;">
+              Nous vous informons par la présente que votre contrat de travail au sein de la société <strong>E-Team</strong> prendra fin à la date suivante :
+            </p>
+
+            <div style="background-color: #f8f9fa; border-left: 5px solid #CCFF00; padding: 20px 24px; margin: 28px 0; border-radius: 6px;">
+              <p style="margin: 0; font-size: 13px; text-transform: uppercase; letter-spacing: 1px; color: #666; font-weight: bold;">Date de fin de contrat</p>
+              <p style="margin: 8px 0 0 0; font-size: 20px; font-weight: bold; color: #000;">${layoff_date}</p>
+            </div>
+
+            <p style="font-size: 15px; line-height: 1.7; color: #444;">
+              Un entretien de départ sera organisé prochainement afin de finaliser les modalités administratives et vous accompagner dans cette transition.
+            </p>
+
+            <p style="font-size: 15px; line-height: 1.7; color: #444;">
+              Nous vous remercions pour votre contribution et vous souhaitons le meilleur pour la suite de votre parcours professionnel.
+            </p>
+
+            <div style="margin-top: 36px;">
+              <p style="margin: 0; font-weight: bold; color: #000;">Hera</p>
+              <p style="margin: 4px 0 0 0; font-size: 13px; color: #888;">Responsable RH Digitale — E-Team</p>
+            </div>
+          </div>
+
+          <!-- Footer -->
+          <div style="background-color: #f4f4f4; padding: 20px; text-align: center; border-top: 1px solid #eee;">
+            <p style="margin: 0; color: #aaa; font-size: 11px;">
+              © 2026 E-Team — Message automatique généré par Hera IA<br>
+              Pour toute question, contactez le département RH.
+            </p>
+          </div>
+
+        </div>
+      `,
+    };
+
+    await transporter.sendMail(mailOptions);
+    console.log(`📧 [HERA] Layoff notice envoyé à ${email}`);
+    return true;
+  } catch (error) {
+    console.error('❌ [HERA] Erreur sendLayoffNoticeEmail:', error.message);
+    return false;
+  }
+};
+
 // ✅ 2. Export global unique (Regroupe tout ici)
 module.exports = {
   sendVerificationEmail,
@@ -927,5 +993,6 @@ module.exports = {
   sendInterviewInvitation,
   sendOffboardingEmail,
   sendHeraConvocation,
-  sendHeraDocumentEmail // Ajouté ici
+  sendHeraDocumentEmail,
+  sendLayoffNoticeEmail,
 };

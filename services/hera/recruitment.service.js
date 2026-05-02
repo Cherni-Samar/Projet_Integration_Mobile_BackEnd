@@ -24,6 +24,7 @@ class RecruitmentService {
   
   /**
    * Process a new candidacy application
+   * Non-blocking: responds immediately, runs AI analysis in background
    * @param {Object} candidacyData - Candidacy data
    * @param {Object} file - Uploaded file (if any)
    * @returns {Promise<Object>} Candidacy processing result
@@ -46,64 +47,78 @@ class RecruitmentService {
       };
     }
 
-    // AI Analysis of candidate
-    const analysis = await heraAgent.analyzeCandidate(
-      resume_text || `Candidat pour ${department}`,
-      department
-    );
-
-    const score = Number(analysis.score) || 0;
-
-    let meeting_link = null;
-    let status = 'applied';
-
-    // High score candidates get automatic interview scheduling
-    if (score >= 80) {
-      meeting_link = `https://meet.jit.si/ETeam_Interview_${name.replace(/\s+/g, '_')}`;
-      status = 'interview_scheduled';
-
-      try {
-        await timo.autoPlanMeeting(name, 'Interview');
-      } catch (e) {
-        console.warn('⚠️ Timo ignoré:', e.message);
-      }
-
-      try {
-        await mailService.sendInterviewInvitation(email, {
-          name,
-          meeting_link,
-        });
-      } catch (e) {
-        console.warn('⚠️ Mail interview ignoré:', e.message);
-      }
-    } else {
-      try {
-        await mailService.sendCandidacyConfirmation(email, name);
-      } catch (e) {
-        console.warn('⚠️ Mail confirmation ignoré:', e.message);
-      }
-    }
-
+    // 1. Save candidate immediately with score_ia = 0 (no AI wait)
     const candidate = await Candidate.create({
       name,
       email,
       department,
-      status,
-      score_ia: score,
+      status: 'applied',
+      score_ia: 0,
       resume_text,
       resume_url,
-      meeting_link,
+      meeting_link: null,
       source: 'linkedin_echo',
-      job_offer_id: mongoose.isValidObjectId(candidacyData.job_offer_id) 
-        ? candidacyData.job_offer_id 
+      job_offer_id: mongoose.isValidObjectId(candidacyData.job_offer_id)
+        ? candidacyData.job_offer_id
         : null,
     });
 
+    // 2. Send confirmation email immediately (non-blocking on AI)
+    try {
+      await mailService.sendCandidacyConfirmation(email, name);
+    } catch (e) {
+      console.warn('⚠️ Mail confirmation ignoré:', e.message);
+    }
+
+    // 3. Run AI analysis in background — does NOT block the response
+    setImmediate(async () => {
+      try {
+        const analysis = await heraAgent.analyzeCandidate(
+          resume_text || `Candidat pour ${department}`,
+          department
+        );
+
+        const score = Number(analysis.score) || 0;
+
+        if (score >= 80) {
+          const meeting_link = `https://meet.jit.si/ETeam_Interview_${name.replace(/\s+/g, '_')}`;
+
+          // Update candidate with AI score and interview status
+          await Candidate.findByIdAndUpdate(candidate._id, {
+            score_ia: score,
+            status: 'interview_scheduled',
+            meeting_link,
+          });
+
+          try {
+            await timo.autoPlanMeeting(name, 'Interview');
+          } catch (e) {
+            console.warn('⚠️ Timo ignoré:', e.message);
+          }
+
+          try {
+            await mailService.sendInterviewInvitation(email, { name, meeting_link });
+          } catch (e) {
+            console.warn('⚠️ Mail interview ignoré:', e.message);
+          }
+
+          console.log(`✅ [CANDIDACY] AI score ${score} → interview scheduled for ${name}`);
+        } else {
+          // Update score even for non-qualifying candidates
+          await Candidate.findByIdAndUpdate(candidate._id, { score_ia: score });
+          console.log(`ℹ️ [CANDIDACY] AI score ${score} → application kept for ${name}`);
+        }
+      } catch (aiErr) {
+        console.warn('⚠️ [CANDIDACY] AI analyse échouée (non bloquant):', aiErr.message);
+      }
+    });
+
+    // 4. Return immediately — AI runs after this
     return {
       success: true,
-      message: 'Candidature envoyée avec succès',
-      score,
-      meeting_link,
+      message: 'Candidature reçue. Email de confirmation envoyé.',
+      score: 0,
+      meeting_link: null,
       candidate,
     };
   }

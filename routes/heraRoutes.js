@@ -97,4 +97,13 @@ router.post('/test/staffing/:userId',     authMiddleware, requireAgentAccess('he
     });
   }
 });
+// --- MANAGER PORTAL ROUTES ---
+// All routes use requireEmployeeAgentAccess('hera')
+// employee_id must be passed in body or params for middleware to resolve req.ceo / req.employee
+router.post('/hr-request',                          requireEmployeeAgentAccess('hera'), hera.createHrRequest);
+router.get('/hr-requests/:employee_id',             requireEmployeeAgentAccess('hera'), hera.getHrRequests);
+router.get('/manager/departments/:employee_id',     requireEmployeeAgentAccess('hera'), hera.getManagerDepartments);
+router.get('/manager/employees/:employee_id',       requireEmployeeAgentAccess('hera'), hera.getManagerEmployees);
+router.get('/manager/dashboard/:employee_id',       requireEmployeeAgentAccess('hera'), hera.getManagerDashboard);
+
 module.exports = router;

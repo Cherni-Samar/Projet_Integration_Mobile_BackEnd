@@ -137,6 +137,23 @@ exports.checkStaffingNeeds = async (req, res) => {
           missing,
         });
 
+        // 7-day deduplication: skip if an alert was already sent for this
+        // department in the last 7 days to avoid spamming Echo
+        const sevenDaysAgo = new Date();
+        sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+
+        const recentAlert = await HeraAction.findOne({
+          ceo_id: req.user.id,
+          action_type: 'absence_alert',
+          'details.department': dept.department,
+          created_at: { $gt: sevenDaysAgo },
+        });
+
+        if (recentAlert) {
+          console.log(`⏭️ [HERA] Staffing alert for ${dept.department} skipped — sent within last 7 days`);
+          continue;
+        }
+
         // 🔥 créer action Hera
         await HeraAction.create({
           ceo_id: req.user.id,
@@ -636,3 +653,181 @@ exports.getAllActions = (req, res) => res.json({ success: true, actions: [] });
 exports.deleteAction = (req, res) => res.json({ success: true, message: "Supprimé" });
 exports.sendEmailToEcho = (req, res) => res.json({ success: true, message: "Envoyé" });
 exports.receiveEmailFromEcho = (req, res) => res.json({ success: true, message: "Reçu" });
+
+
+// ══════════════════════════════════════════════════════════════════════════
+// MANAGER PORTAL — Functions added from BackEnd-basbousa
+// Requires: requireEmployeeAgentAccess('hera') middleware
+// req.ceo    → CEO User document (set by middleware)
+// req.employee → Employee document of the requesting manager (set by middleware)
+// ══════════════════════════════════════════════════════════════════════════
+
+// POST /api/hera/hr-request
+exports.createHrRequest = async (req, res) => {
+  try {
+    const {
+      type,
+      department,
+      missing_count,
+      reason,
+      priority,
+      target_employee_id,
+      layoff_date,
+      impact,
+    } = req.body;
+
+    let details = {
+      type,
+      department,
+      reason,
+      priority,
+    };
+
+    // Case: staffing shortage
+    if (type === 'staffing_shortage') {
+      details.missing_count = missing_count;
+      details.status = 'pending_analysis';
+    }
+
+    // Case: recruitment request
+    if (type === 'recruitment') {
+      details.role = req.body.role;
+      details.contract_type = req.body.contract_type;
+      details.headcount = req.body.headcount;
+      details.level = req.body.level;
+      details.skills = req.body.skills;
+      details.salary_budget = req.body.salary_budget;
+      details.status = 'pending_analysis';
+    }
+
+    // Case: layoff
+    if (type === 'layoff') {
+      details.target_employee_id = target_employee_id;
+      details.layoff_date = layoff_date;
+      details.impact = impact;
+      details.status = 'scheduled';
+
+      const targetEmployee = await Employee.findById(target_employee_id);
+      if (targetEmployee) {
+        await mailService.sendLayoffNoticeEmail(targetEmployee.email, {
+          employee_name: targetEmployee.name,
+          layoff_date,
+        });
+      }
+    }
+
+    const action = await HeraAction.create({
+      ceo_id: req.ceo._id,
+      employee_id: req.employee._id,
+      action_type: 'hr_request',
+      triggered_by: 'manager',
+      details,
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Demande RH enregistrée',
+      action,
+    });
+  } catch (err) {
+    console.error('createHrRequest ERROR:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+};
+
+// GET /api/hera/hr-requests/:employee_id
+exports.getHrRequests = async (req, res) => {
+  try {
+    const actions = await HeraAction.find({
+      ceo_id: req.ceo._id,
+      action_type: 'hr_request',
+    }).sort({ createdAt: -1 });
+
+    res.json({ success: true, data: actions });
+  } catch (err) {
+    console.error('getHrRequests ERROR:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+};
+
+// GET /api/hera/manager/departments/:employee_id
+exports.getManagerDepartments = async (req, res) => {
+  try {
+    const employee = await Employee.findById(req.params.employee_id);
+    if (!employee) {
+      return res.status(404).json({ error: 'Employee not found' });
+    }
+
+    const ceo = await User.findById(employee.ceo_id);
+
+    const departments = (ceo?.workforceSettings || []).map((w) => ({
+      department: w.department,
+      targetCount: w.targetCount,
+      currentCount: w.currentCount,
+    }));
+
+    res.json({ success: true, departments });
+  } catch (err) {
+    console.error('getManagerDepartments ERROR:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+};
+
+// GET /api/hera/manager/employees/:employee_id
+exports.getManagerEmployees = async (req, res) => {
+  try {
+    const employees = await Employee.find({
+      ceo_id: req.ceo._id,
+      _id: { $ne: req.employee._id }, // exclude the requesting manager
+    })
+      .select('_id name department role')
+      .lean();
+
+    res.json({ success: true, employees });
+  } catch (err) {
+    console.error('getManagerEmployees ERROR:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+};
+
+// GET /api/hera/manager/dashboard/:employee_id
+exports.getManagerDashboard = async (req, res) => {
+  try {
+    const ceoId = req.ceo._id;
+
+    const teamSize = await Employee.countDocuments({
+      ceo_id: ceoId,
+      status: { $in: ['active', 'onboarding', 'offboarding'] },
+    });
+
+    const onLeave = await LeaveRequest.countDocuments({
+      status: 'approved',
+      start_date: { $lte: new Date() },
+      end_date: { $gte: new Date() },
+    });
+
+    const alerts = await HeraAction.countDocuments({
+      ceo_id: ceoId,
+      action_type: 'hr_request',
+      'details.status': { $in: ['pending_analysis', 'scheduled', 'pending_ceo_approval'] },
+    });
+
+    const recentActions = await HeraAction.find({ ceo_id: ceoId })
+      .sort({ created_at: -1 })
+      .limit(5)
+      .lean();
+
+    res.json({
+      success: true,
+      data: {
+        teamSize,
+        onLeave,
+        alerts,
+        recentActions,
+      },
+    });
+  } catch (err) {
+    console.error('getManagerDashboard ERROR:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+};
