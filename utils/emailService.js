@@ -1,15 +1,48 @@
 const nodemailer = require('nodemailer');
 
-// Configuration du transporteur email
+// ══════════════════════════════════════════════════════════════
+// TRANSPORT EMAIL — Resend (HTTP) en production, SMTP en local
+// Render bloque SMTP (ports 465/587) → on utilise Resend API
+// ══════════════════════════════════════════════════════════════
+
+// Fonction d'envoi universelle : Resend si clé dispo, sinon SMTP
+async function sendEmail({ from, to, subject, html }) {
+  // ── Resend (production Render) ──
+  if (process.env.RESEND_API_KEY) {
+    const { Resend } = require('resend');
+    const resend = new Resend(process.env.RESEND_API_KEY);
+    const fromAddr = process.env.RESEND_FROM || 'E-Team RH <onboarding@resend.dev>';
+    const result = await resend.emails.send({ from: fromAddr, to, subject, html });
+    if (result.error) throw new Error(result.error.message || JSON.stringify(result.error));
+    return { messageId: result.data?.id || 'resend-ok', accepted: [to] };
+  }
+
+  // ── SMTP fallback (développement local) ──
+  const port = parseInt(process.env.EMAIL_PORT) || 587;
+  const transporter = nodemailer.createTransport({
+    host: process.env.EMAIL_HOST || 'smtp.gmail.com',
+    port,
+    secure: port === 465,
+    auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
+    tls: { rejectUnauthorized: false }
+  });
+  await transporter.verify();
+  const info = await transporter.sendMail({ from, to, subject, html });
+  return { messageId: info.messageId, accepted: info.accepted };
+}
+
+// Configuration du transporteur email (conservé pour compatibilité)
 const createTransporter = () => {
+  const port = parseInt(process.env.EMAIL_PORT) || 587;
   return nodemailer.createTransport({
     host: process.env.EMAIL_HOST || 'smtp.gmail.com',
-    port: process.env.EMAIL_PORT || 587,
-    secure: false,
+    port,
+    secure: port === 465,
     auth: {
       user: process.env.EMAIL_USER,
       pass: process.env.EMAIL_PASS,
     },
+    tls: { rejectUnauthorized: false }
   });
 };
 
@@ -365,9 +398,13 @@ const sendStaffingAlert = async (targetEmail, details) => {
 // 1. Pour confirmer la réception simple
 const sendCandidacyConfirmation = async (email, name) => {
   try {
-    const transporter = createTransporter();
-    await transporter.sendMail({
-      from: `"E-Team RH" <${process.env.EMAIL_USER}>`,
+    if (!process.env.RESEND_API_KEY && (!process.env.EMAIL_USER || !process.env.EMAIL_PASS)) {
+      console.error('❌ [EMAIL] Aucune config email (RESEND_API_KEY ou EMAIL_USER/PASS manquant)');
+      return false;
+    }
+    console.log(`📧 [EMAIL] Envoi confirmation à : ${email}`);
+    const info = await sendEmail({
+      from: `"E-Team RH" <${process.env.EMAIL_USER || 'noreply@e-team.com'}>`,
       to: email,
       subject: '📩 Confirmation de réception : Votre candidature chez E-Team',
       html: `
@@ -386,12 +423,12 @@ const sendCandidacyConfirmation = async (email, name) => {
           <div style="background-color: #f9f9f9; border-left: 4px solid #ccc; padding: 20px; margin: 25px 0;">
             <p style="margin: 0; font-size: 14px; color: #666; line-height: 1.5;">
               <b>Statut actuel :</b> Étude de votre dossier.<br>
-              Votre profil est actuellement examiné par notre département des Ressources Humaines afin d'évaluer la correspondance avec nos besoins actuels.
+              Votre profil est actuellement examiné par notre département RH.
             </p>
           </div>
 
           <p style="font-size: 15px; line-height: 1.6; color: #555;">
-            Si votre profil est retenu pour la prochaine étape, vous recevrez une invitation pour une session de découverte avec nos équipes. Dans le cas contraire, nous conserverons votre profil dans notre base de données pour d'éventuelles opportunités futures.
+            Si votre profil est retenu, vous recevrez une invitation pour un entretien IA.
           </p>
 
           <p style="font-size: 15px; margin-top: 30px; color: #000; font-weight: bold;">
@@ -407,10 +444,10 @@ const sendCandidacyConfirmation = async (email, name) => {
         </div>
       `
     });
-    console.log(`📧 MAIL : Confirmation de réception (Humaine) envoyée à ${email}`);
+    console.log(`✅ [EMAIL] Confirmation envoyée à ${email} — ID: ${info.messageId}`);
     return true;
   } catch (e) { 
-    console.error("❌ ERREUR NODEMAILER (Confirmation):", e.message);
+    console.error(`❌ [EMAIL] Erreur confirmation → ${email} : ${e.message}`);
     return false; 
   }
 };
@@ -466,29 +503,77 @@ const sendGroupMeetingInvitation = async (email, details) => {
 };
 const sendInterviewInvitation = async (email, details) => {
   try {
-    const transporter = createTransporter();
-    await transporter.sendMail({
-      from: `"E-Team RH" <${process.env.EMAIL_USER}>`,
+    console.log(`📧 [EMAIL] Envoi invitation entretien → ${email} (score: ${details.score})`);
+    const info = await sendEmail({
+      from: `"E-Team RH" <${process.env.EMAIL_USER || 'noreply@e-team.com'}>`,
       to: email,
-      subject: '📅 Invitation à votre entretien individuel - E-Team',
+      subject: 'Invitation à votre entretien - E-Team',
       html: `
-        <div style="font-family: sans-serif; max-width: 600px; margin: auto; border: 1px solid #eee; padding: 25px; border-radius: 12px;">
-          <h2 style="color: #000;">Bonjour ${details.name},</h2>
-          <p>Votre profil a été retenu pour un premier échange.</p>
-          <p>Nous vous invitons à un <b>entretien individuel</b> en visioconférence pour discuter de votre candidature :</p>
-          
-          <div style="background-color: #f8f9fa; padding: 15px; border-radius: 8px; margin: 20px 0; text-align: center;">
-            <p>🔗 <b>Lien de votre entretien :</b><br>
-            <a href="${details.meeting_link}" style="color: #007BFF; font-weight: bold;">${details.meeting_link}</a></p>
+        <div style="font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; max-width: 600px; margin: auto; color: #1a1a1a; background-color: #ffffff; border: 1px solid #e1e1e1;">
+
+          <!-- Header -->
+          <div style="background-color: #0A0A0A; padding: 36px; text-align: center;">
+            <span style="font-size: 26px; font-weight: bold; color: #CCFF00; letter-spacing: 2px;">E-TEAM</span>
           </div>
 
-          <p>Un membre de l'équipe RH vous contactera pour fixer l'heure.</p>
-          <p>À bientôt,<br>Département RH E-Team</p>
+          <!-- Body -->
+          <div style="padding: 40px 36px;">
+            <h2 style="font-size: 20px; color: #000; margin-top: 0; font-weight: 600;">Félicitations ${details.name},</h2>
+
+            <p style="font-size: 15px; line-height: 1.7; color: #444;">
+              Votre candidature a été analysée et votre profil a obtenu un score de
+              <strong style="color: #000;">${details.score}/100</strong>.
+              Vous êtes sélectionné(e) pour passer à l'étape suivante du processus de recrutement.
+            </p>
+
+            <p style="font-size: 15px; line-height: 1.7; color: #444;">
+              Nous vous invitons à un entretien individuel en ligne d'une durée de 10 à 15 minutes.
+            </p>
+
+            <!-- Info box -->
+            <div style="background-color: #f8f9fa; border-left: 4px solid #CCFF00; padding: 24px; margin: 28px 0;">
+              <p style="margin: 0 0 6px 0; font-weight: bold; color: #000; text-transform: uppercase; font-size: 11px; letter-spacing: 1px;">Date prévue</p>
+              <p style="margin: 0 0 24px 0; font-size: 16px; color: #333; font-weight: 500;">${details.interview_date}</p>
+
+              <p style="margin: 0 0 12px 0; font-weight: bold; color: #000; text-transform: uppercase; font-size: 11px; letter-spacing: 1px;">Accéder à votre entretien</p>
+              <div style="text-align: center; margin-top: 8px;">
+                <a href="${details.meeting_link}"
+                   style="display: inline-block; background-color: #CCFF00; color: #000; padding: 14px 32px; text-decoration: none; font-weight: bold; font-size: 15px; letter-spacing: 0.5px;">
+                  Démarrer l'entretien
+                </a>
+              </div>
+            </div>
+
+            <!-- Instructions -->
+            <div style="border: 1px solid #e8e8e8; padding: 20px; margin-bottom: 28px;">
+              <p style="margin: 0 0 12px 0; font-weight: bold; color: #000; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;">Avant de commencer</p>
+              <ul style="margin: 0; padding-left: 18px; color: #555; font-size: 14px; line-height: 2;">
+                <li>Autorisez l'accès à votre microphone</li>
+                <li>Choisissez un endroit calme</li>
+                <li>L'entretien comporte 12 questions en 4 phases</li>
+              </ul>
+            </div>
+
+            <p style="font-size: 13px; color: #888;">Ce lien est personnel. Ne le partagez pas.</p>
+
+            <p style="margin-bottom: 4px; font-size: 15px; color: #000;">Cordialement,</p>
+            <p style="margin-top: 0; font-weight: bold; color: #000;">L'équipe RH — E-Team</p>
+          </div>
+
+          <!-- Footer -->
+          <div style="background-color: #f4f4f4; padding: 18px; text-align: center; border-top: 1px solid #eee;">
+            <p style="margin: 0; color: #999; font-size: 11px;">
+              © 2026 E-Team — Message automatique
+            </p>
+          </div>
         </div>`
     });
-    console.log(`📧 MAIL : Invitation Entretien Individuel envoyée à ${email}`);
+    console.log(`✅ [EMAIL] Invitation entretien envoyée à ${email} — ID: ${info.messageId}`);
     return true;
-  } catch (e) { return false; }
+  } catch (e) {
+    console.error(`❌ [EMAIL] Erreur sendInterviewInvitation → ${email} : ${e.message}`);
+    return false;
+  }
 };
 
 const sendOffboardingEmail = async (email, details) => {

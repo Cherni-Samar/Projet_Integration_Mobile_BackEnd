@@ -311,19 +311,102 @@ exports.initAllMissingDocs = async (req, res) => {
 // ══════════════════════════════════════════════════════════════════════════
 exports.processCandidacy = async (req, res) => {
   try {
-    const result = await recruitmentService.processCandidacy(req.body, req.file);
-    
-    if (!result.success) {
-      return res.status(400).json(result);
+    const { name, email, resume_text, department, job_offer_id } = req.body;
+    const resume_url = req.file ? req.file.path : null;
+
+    console.log(`📩 [HERA] Candidature reçue : ${name} — ${email} — Dept: ${department || 'N/A'}`);
+    console.log(`📄 [HERA] Fichier PDF : ${req.file ? req.file.originalname : 'aucun'}`);
+    console.log(`📝 [HERA] Texte CV : ${resume_text ? resume_text.substring(0, 50) + '...' : 'vide'}`);
+
+    // ── Validation ──
+    if (!name || !email) {
+      return res.status(400).json({ success: false, error: 'Les champs name et email sont requis.' });
     }
-    
-    return res.json(result);
-  } catch (err) {
-    console.error('❌ processCandidacy error:', err);
-    return res.status(500).json({
-      success: false,
-      error: err.message,
+
+    // ── Réponse immédiate au candidat (évite le timeout 60s sur Render) ──
+    res.json({ success: true, score: null, message: 'Candidature reçue ! Vous recevrez un email sous quelques minutes.' });
+
+    // ── Traitement en arrière-plan (après la réponse HTTP) ──
+    setImmediate(async () => {
+      try {
+        // ── Extraction texte du PDF si fourni ──
+        let finalResumeText = resume_text || '';
+        if (req.file && req.file.path) {
+          try {
+            const fs = require('fs');
+            const pdfParse = require('pdf-parse');
+            const pdfBuffer = fs.readFileSync(req.file.path);
+            const pdfData = await pdfParse(pdfBuffer);
+            const pdfText = pdfData.text?.trim() || '';
+            if (pdfText.length > 50) {
+              finalResumeText = pdfText + '\n' + finalResumeText;
+              console.log(`📄 [HERA] PDF extrait : ${pdfText.length} caractères`);
+            }
+          } catch (pdfErr) {
+            console.warn(`⚠️ [HERA] Impossible de lire le PDF : ${pdfErr.message}`);
+          }
+        }
+
+        console.log(`📝 [HERA] Texte final pour analyse (${finalResumeText.length} chars)`);
+
+        const analysis = await recruitmentService.analyzeCandidate
+          ? await recruitmentService.analyzeCandidate(finalResumeText || 'Candidat sans CV', department || 'Profil E-Team')
+          : await (require('../services/hera/hera.agent')).analyzeCandidate(finalResumeText || 'Candidat sans CV', department || 'Profil E-Team');
+        const score = Number(analysis.score) || 0;
+        console.log(`📊 [HERA] Score IA pour ${name} : ${score}`);
+
+        // ── EMAIL 1 : Confirmation de réception (TOUJOURS envoyé) ──
+        const confirmSent = await mailService.sendCandidacyConfirmation(email, name);
+        console.log(`📧 [HERA] Email 1 — Confirmation → ${email} : ${confirmSent ? '✅ ENVOYÉ' : '❌ ÉCHEC'}`);
+
+        if (score >= 80) {
+          // ── Génération du lien MODELAI/INTERVIEW ──
+          const modelaiBaseUrl = process.env.INTERVIEW_URL || process.env.MODELAI_URL || 'http://localhost:3001';
+          const interviewLink = `${modelaiBaseUrl}/index.html?name=${encodeURIComponent(name)}&department=${encodeURIComponent(department || 'General')}&role=${encodeURIComponent(req.body.job_role || 'Collaborateur')}&email=${encodeURIComponent(email)}&lang=fr`;
+
+          console.log(`🔗 [HERA] Lien entretien généré : ${interviewLink}`);
+
+          const date = await timo.autoPlanMeeting(name, "Interview");
+
+          const inviteSent = await mailService.sendInterviewInvitation(email, {
+            name,
+            score,
+            interview_date: date?.date || 'À confirmer',
+            meeting_link: interviewLink
+          });
+          console.log(`📧 [HERA] Email 2 — Invitation entretien IA → ${email} : ${inviteSent ? '✅ ENVOYÉ' : '❌ ÉCHEC'}`);
+
+          await Candidate.create({
+            name,
+            email,
+            department,
+            status: 'interview_scheduled',
+            score_ia: score,
+            resume_text: finalResumeText,
+            meeting_link: interviewLink
+          });
+        } else {
+          await Candidate.create({
+            name,
+            email,
+            department,
+            resume_text: finalResumeText,
+            resume_url,
+            status: 'applied',
+            score_ia: score
+          });
+          console.log(`📧 [HERA] Score ${score} < 80 — Seul l'email de confirmation envoyé à ${email}`);
+        }
+      } catch (bgErr) {
+        console.error('❌ [HERA] Erreur traitement arrière-plan:', bgErr.message);
+      }
     });
+
+  } catch (err) {
+    console.error('❌ [HERA] Erreur processCandidacy:', err.message);
+    if (!res.headersSent) {
+      res.status(500).json({ error: err.message });
+    }
   }
 };
 
