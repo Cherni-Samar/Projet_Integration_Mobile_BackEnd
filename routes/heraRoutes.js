@@ -37,6 +37,18 @@ router.get('/admin/stats', authMiddleware, hera.getAdminStats);
 router.get('/admin/employees', authMiddleware, hera.getAllEmployees);
 router.get('/admin/recent-actions', authMiddleware, hera.getRecentActions);
 
+// Task 1 — candidates list used by hr_dashboard_page
+router.get('/candidates', authMiddleware, hera.getAllCandidates);
+
+// Task 2 — document generation used by hr_dashboard_page
+router.post('/generate-doc', authMiddleware, requireAgentAccess('hera'), hera.generateDocument);
+
+// Task 3 — paginated full action history used by hera_history_page
+router.get('/admin/actions', authMiddleware, hera.getAllActions);
+
+// Task 4 — swipe-to-delete action used by hr_dashboard_page and hera_history_page
+router.delete('/admin/action/:actionId', authMiddleware, hera.deleteAction);
+
 router.get('/admin/dexo-checkup', authMiddleware, dexo.getDailyCheckUp);
 router.get('/admin/document-actions', authMiddleware, dexo.getDocumentActions);
 router.get('/admin/timo-tasks', authMiddleware, timo.getTimoTasks);

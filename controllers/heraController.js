@@ -649,8 +649,75 @@ exports.getAgentInteractionStats = async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 };
-exports.getAllActions = (req, res) => res.json({ success: true, actions: [] });
-exports.deleteAction = (req, res) => res.json({ success: true, message: "Supprimé" });
+// GET /api/hera/admin/actions?page=&limit=
+// Returns paginated HeraActions scoped to the authenticated CEO.
+exports.getAllActions = async (req, res) => {
+  try {
+    const ceoId = req.user.id;
+    const page  = Math.max(1, parseInt(req.query.page)  || 1);
+    const limit = Math.max(1, parseInt(req.query.limit) || 20);
+    const skip  = (page - 1) * limit;
+
+    const [actions, total] = await Promise.all([
+      HeraAction.find({ ceo_id: ceoId })
+        .sort({ created_at: -1 })
+        .skip(skip)
+        .limit(limit)
+        .populate('employee_id', 'name role')
+        .lean(),
+      HeraAction.countDocuments({ ceo_id: ceoId }),
+    ]);
+
+    const formatted = actions.map(action => ({
+      _id: action._id,
+      employee_name: action.employee_id?.name || 'Système',
+      action_type: action.action_type,
+      details: action.details,
+      created_at: action.created_at,
+      badge: action.triggered_by === 'hera_auto' ? 'IA' : 'ADMIN',
+    }));
+
+    return res.json({
+      success: true,
+      actions: formatted,
+      pagination: {
+        page,
+        limit,
+        total,
+        pages: Math.ceil(total / limit),
+      },
+    });
+  } catch (err) {
+    console.error('❌ getAllActions error:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+};
+
+// DELETE /api/hera/admin/action/:actionId
+// Deletes a HeraAction only if it belongs to the authenticated CEO.
+exports.deleteAction = async (req, res) => {
+  try {
+    const ceoId    = req.user.id;
+    const actionId = req.params.actionId;
+
+    const deleted = await HeraAction.findOneAndDelete({
+      _id: actionId,
+      ceo_id: ceoId,
+    });
+
+    if (!deleted) {
+      return res.status(404).json({
+        success: false,
+        message: 'Action introuvable ou accès refusé',
+      });
+    }
+
+    return res.json({ success: true, message: 'Action supprimée' });
+  } catch (err) {
+    console.error('❌ deleteAction error:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+};
 exports.sendEmailToEcho = (req, res) => res.json({ success: true, message: "Envoyé" });
 exports.receiveEmailFromEcho = (req, res) => res.json({ success: true, message: "Reçu" });
 

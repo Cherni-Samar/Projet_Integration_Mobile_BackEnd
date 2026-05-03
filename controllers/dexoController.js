@@ -4,6 +4,7 @@ const briefingService = require('../services/dexo/briefing.service');
 const HeraAction = require('../models/HeraAction');
 const ProjectOpportunity = require('../models/ProjectOpportunity');
 const User = require('../models/User');
+const Document = require('../models/Document');
 const { triggerStaffingForUser } = require('../services/hera/staffingEventService');
 
 // ── Document Factory ──────────────────────────────────────────────────────────
@@ -252,5 +253,74 @@ exports.getDailyCheckUp = async (req, res) => {
       success: false,
       error: err.message,
     });
+  }
+};
+
+// ── Document Category Browsing ────────────────────────────────────────────────
+
+// GET /api/dexo/documents-by-category
+// Returns active documents owned by the authenticated CEO, optionally filtered
+// by category, with pagination via limit/offset.
+exports.getDocumentsByCategory = async (req, res) => {
+  try {
+    const ceoId = req.user.id;
+    const category = req.query.category;
+    const limit  = Math.max(1, parseInt(req.query.limit)  || 20);
+    const offset = Math.max(0, parseInt(req.query.offset) || 0);
+
+    const filter = {
+      uploadedBy: ceoId,
+      status: 'active',
+    };
+
+    if (category) {
+      filter.category = category;
+    }
+
+    const [documents, total] = await Promise.all([
+      Document.find(filter)
+        .sort({ uploadedAt: -1 })
+        .skip(offset)
+        .limit(limit)
+        .lean(),
+      Document.countDocuments(filter),
+    ]);
+
+    return res.json({
+      success: true,
+      documents,
+      pagination: { total, limit, offset },
+    });
+  } catch (err) {
+    console.error('❌ getDocumentsByCategory error:', err);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+};
+
+// GET /api/dexo/document-content/:id
+// Returns a single active document owned by the authenticated CEO.
+// Returns 404 if the document does not exist or belongs to another CEO.
+exports.getDocumentContent = async (req, res) => {
+  try {
+    const ceoId = req.user.id;
+    const { id } = req.params;
+
+    const document = await Document.findOne({
+      _id: id,
+      uploadedBy: ceoId,
+      status: 'active',
+    }).lean();
+
+    if (!document) {
+      return res.status(404).json({
+        success: false,
+        message: 'Document introuvable ou accès refusé',
+      });
+    }
+
+    return res.json({ success: true, document });
+  } catch (err) {
+    console.error('❌ getDocumentContent error:', err);
+    return res.status(500).json({ success: false, message: err.message });
   }
 };
