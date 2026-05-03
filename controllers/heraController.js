@@ -565,16 +565,16 @@ exports.processCandidacy = async (req, res) => {
         if (req.file && req.file.path) {
           try {
             const fs = require('fs');
-            const pdfParse = require('pdf-parse');
+            const pdfParseLib = require('pdf-parse');
             const pdfBuffer = fs.readFileSync(req.file.path);
-            const pdfData = await pdfParse(pdfBuffer);
+            const pdfData = await pdfParseLib(pdfBuffer);
             const pdfText = pdfData.text?.trim() || '';
             if (pdfText.length > 50) {
               finalResumeText = pdfText + '\n' + finalResumeText;
-              console.log(`📄 [HERA] PDF extrait : ${pdfText.length} caractères`);
+              console.log(`[HERA] PDF extrait : ${pdfText.length} caractères`);
             }
           } catch (pdfErr) {
-            console.warn(`⚠️ [HERA] Impossible de lire le PDF : ${pdfErr.message}`);
+            console.warn(`[HERA] Impossible de lire le PDF : ${pdfErr.message}`);
           }
         }
 

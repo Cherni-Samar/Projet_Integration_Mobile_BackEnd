@@ -1,41 +1,51 @@
 const nodemailer = require('nodemailer');
 
 // ══════════════════════════════════════════════════════════════
-// TRANSPORT EMAIL — Gmail SMTP uniquement
-// Resend désactivé : mode test Resend bloque les emails externes
-// Gmail SMTP fonctionne vers TOUTES les adresses email
+// TRANSPORT EMAIL
+// Priorité : Brevo API (HTTP) → SMTP Gmail (local)
+// Render bloque SMTP → Brevo fonctionne via HTTP vers TOUTES adresses
 // ══════════════════════════════════════════════════════════════
 
-// Créer le transporteur Gmail SMTP
+// Créer le transporteur SMTP (utilisé en local uniquement)
 const createTransporter = () => {
   return nodemailer.createTransport({
     host: process.env.EMAIL_HOST || 'smtp.gmail.com',
     port: parseInt(process.env.EMAIL_PORT) || 587,
-    secure: false,   // false pour port 587 (STARTTLS)
-    auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS,
-    },
+    secure: false,
+    auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
     tls: { rejectUnauthorized: false }
   });
 };
 
-// Vérifier la connexion SMTP au démarrage
-createTransporter().verify()
-  .then(() => console.log('✅ [EMAIL] Connexion SMTP Gmail OK — prêt à envoyer vers toutes adresses'))
-  .catch(err => console.error('❌ [EMAIL] Connexion SMTP échouée :', err.message));
-
-// Fonction d'envoi universelle — Gmail SMTP uniquement
+// Fonction d'envoi universelle
 async function sendEmail({ from, to, subject, html }) {
   console.log(`[EMAIL] Sending to: ${to}`);
 
-  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
-    throw new Error('EMAIL_USER ou EMAIL_PASS manquant dans les variables environnement');
+  // ── Brevo API HTTP (fonctionne sur Render, vers toutes adresses) ──
+  if (process.env.BREVO_API_KEY) {
+    const SibApiV3Sdk = require('@getbrevo/brevo');
+    const apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
+    apiInstance.setApiKey(SibApiV3Sdk.TransactionalEmailsApiApiKeys.apiKey, process.env.BREVO_API_KEY);
+
+    const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
+    sendSmtpEmail.subject = subject;
+    sendSmtpEmail.htmlContent = html;
+    sendSmtpEmail.sender = { name: 'E-Team RH', email: process.env.EMAIL_USER || 'noreply@e-team.com' };
+    sendSmtpEmail.to = [{ email: to }];
+
+    const result = await apiInstance.sendTransacEmail(sendSmtpEmail);
+    console.log(`[EMAIL] Sent successfully via Brevo: ${to} — ID: ${result.body?.messageId || 'ok'}`);
+    return { messageId: result.body?.messageId || 'brevo-ok', accepted: [to] };
   }
 
+  // ── SMTP Gmail (fallback local) ──
+  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+    throw new Error('BREVO_API_KEY ou EMAIL_USER/PASS manquant');
+  }
   const transporter = createTransporter();
+  await transporter.verify();
   const info = await transporter.sendMail({ from, to, subject, html });
-  console.log(`[EMAIL] Sent successfully: ${to} — ID: ${info.messageId}`);
+  console.log(`[EMAIL] Sent successfully via SMTP: ${to} — ID: ${info.messageId}`);
   return { messageId: info.messageId, accepted: info.accepted };
 }
 
