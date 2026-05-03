@@ -95,107 +95,70 @@ app.get('/', (req, res) => res.json({ status: 'running', service: 'Hera Assistan
 app.get('/health', (req, res) => res.json({ status: 'OK', db: mongoose.connection.readyState === 1 }));
 
 // ══════════════════════════════════════════════════════════════
-// 🔧 DIAGNOSTIC COMPLET — teste email + groq + env sur Render
-// Ouvre dans le navigateur : /api/diagnostic
+// DIAGNOSTIC — Gmail SMTP uniquement (Resend supprime)
+// GET /api/diagnostic
+// GET /api/diagnostic?email=test@gmail.com
 // ══════════════════════════════════════════════════════════════
 app.get('/api/diagnostic', async (req, res) => {
+  const testEmail = req.query.email || process.env.EMAIL_USER;
   const results = {
     timestamp: new Date().toISOString(),
-    environment: process.env.NODE_ENV || 'unknown',
     variables: {
-      EMAIL_HOST:    process.env.EMAIL_HOST  || '❌ MANQUANT',
-      EMAIL_PORT:    process.env.EMAIL_PORT  || '❌ MANQUANT',
-      EMAIL_USER:    process.env.EMAIL_USER  ? '✅ ' + process.env.EMAIL_USER : '❌ MANQUANT',
-      EMAIL_PASS:    process.env.EMAIL_PASS  ? '✅ défini (' + process.env.EMAIL_PASS.length + ' chars)' : '❌ MANQUANT',
-      GROQ_API_KEY:  process.env.GROQ_API_KEY ? '✅ défini (' + process.env.GROQ_API_KEY.substring(0,8) + '...)' : '❌ MANQUANT',
-      MONGODB_URI:   process.env.MONGODB_URI  ? '✅ défini' : '❌ MANQUANT',
-      PUBLIC_BASE_URL: process.env.PUBLIC_BASE_URL || '❌ MANQUANT',
-      INTERVIEW_URL: process.env.INTERVIEW_URL || '❌ MANQUANT',
+      EMAIL_HOST:     process.env.EMAIL_HOST    || 'MANQUANT',
+      EMAIL_PORT:     process.env.EMAIL_PORT    || 'MANQUANT',
+      EMAIL_USER:     process.env.EMAIL_USER    ? 'OK: ' + process.env.EMAIL_USER : 'MANQUANT',
+      EMAIL_PASS:     process.env.EMAIL_PASS    ? 'OK (' + process.env.EMAIL_PASS.length + ' chars)' : 'MANQUANT',
+      GROQ_API_KEY:   process.env.GROQ_API_KEY  ? 'OK: ' + process.env.GROQ_API_KEY.substring(0, 8) + '...' : 'MANQUANT',
+      INTERVIEW_URL:  process.env.INTERVIEW_URL || 'MANQUANT',
+      PUBLIC_BASE_URL: process.env.PUBLIC_BASE_URL || 'MANQUANT',
     },
-    smtp: { status: '⏳ test en cours...' },
-    email_send: { status: '⏳ test en cours...' },
-    groq: { status: '⏳ test en cours...' },
-    mongodb: { status: mongoose.connection.readyState === 1 ? '✅ connecté' : '❌ déconnecté' }
+    smtp:       { status: 'pending' },
+    email_send: { status: 'pending' },
+    groq:       { status: 'pending' },
+    mongodb:    { status: mongoose.connection.readyState === 1 ? 'OK: connecte' : 'ERREUR: deconnecte' }
   };
 
-  // ── Test SMTP connexion ──
+  // ── Test SMTP Gmail ──
   try {
-    // Si Resend configuré → tester Resend directement
-    if (process.env.RESEND_API_KEY) {
-      const { Resend } = require('resend');
-      const resend = new Resend(process.env.RESEND_API_KEY);
-      const testEmail = req.query.email || process.env.EMAIL_USER;
-      const fromAddr = process.env.RESEND_FROM || 'E-Team <onboarding@resend.dev>';
-      results.smtp = { status: '✅ Resend API configuré (pas de SMTP)' };
-      try {
-        const r = await resend.emails.send({
-          from: fromAddr,
-          to: testEmail,
-          subject: '🔧 [DIAGNOSTIC] Test email Render — E-Team',
-          html: `<div style="font-family:sans-serif;padding:20px;border:2px solid #CCFF00;border-radius:12px;">
-            <h2>✅ Email Render fonctionne via Resend !</h2>
-            <p><b>Serveur :</b> ${process.env.PUBLIC_BASE_URL}</p>
-            <p><b>Heure :</b> ${new Date().toLocaleString('fr-FR')}</p>
-          </div>`
-        });
-        if (r.error) throw new Error(r.error.message);
-        results.email_send = { status: '✅ email envoyé via Resend', to: testEmail, id: r.data?.id };
-      } catch (sendErr) {
-        results.email_send = { status: '❌ échec Resend', error: sendErr.message };
-      }
-    } else {
-      // Fallback SMTP
-      const nodemailer = require('nodemailer');
-      const transporter = nodemailer.createTransport({
-        host: process.env.EMAIL_HOST || 'smtp.gmail.com',
-        port: parseInt(process.env.EMAIL_PORT) || 587,
-        secure: parseInt(process.env.EMAIL_PORT) === 465,
-        auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
-        tls: { rejectUnauthorized: false }
+    const nodemailer = require('nodemailer');
+    const transporter = nodemailer.createTransport({
+      host: process.env.EMAIL_HOST || 'smtp.gmail.com',
+      port: parseInt(process.env.EMAIL_PORT) || 587,
+      secure: false,
+      auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
+      tls: { rejectUnauthorized: false }
+    });
+    await transporter.verify();
+    results.smtp = { status: 'OK: connexion Gmail SMTP reussie' };
+    try {
+      const info = await transporter.sendMail({
+        from: `"E-Team Diagnostic" <${process.env.EMAIL_USER}>`,
+        to: testEmail,
+        subject: '[DIAGNOSTIC] Test email E-Team',
+        html: `<div style="font-family:sans-serif;padding:20px;border:2px solid #CCFF00;max-width:500px;">
+          <h2>Gmail SMTP fonctionne !</h2>
+          <p><b>Destinataire :</b> ${testEmail}</p>
+          <p><b>SMTP :</b> ${process.env.EMAIL_HOST}:${process.env.EMAIL_PORT}</p>
+          <p><b>Heure :</b> ${new Date().toLocaleString('fr-FR')}</p>
+        </div>`
       });
-      await transporter.verify();
-      results.smtp = { status: '✅ connexion SMTP OK' };
-      const testEmail = req.query.email || process.env.EMAIL_USER;
-      try {
-        const info = await transporter.sendMail({
-          from: `"E-Team Diagnostic" <${process.env.EMAIL_USER}>`,
-          to: testEmail,
-          subject: '🔧 [DIAGNOSTIC] Test email Render — E-Team',
-          html: `<div style="padding:20px;border:2px solid #CCFF00;border-radius:12px;">
-            <h2>✅ Email Render fonctionne !</h2>
-            <p><b>SMTP :</b> ${process.env.EMAIL_HOST}:${process.env.EMAIL_PORT}</p>
-            <p><b>Heure :</b> ${new Date().toLocaleString('fr-FR')}</p>
-          </div>`
-        });
-        results.email_send = { status: '✅ email envoyé via SMTP', to: testEmail, messageId: info.messageId };
-      } catch (sendErr) {
-        results.email_send = { status: '❌ échec envoi SMTP', error: sendErr.message, code: sendErr.code };
-      }
+      results.email_send = { status: 'OK: email envoye', to: testEmail, messageId: info.messageId };
+    } catch (sendErr) {
+      results.email_send = { status: 'ERREUR envoi', error: sendErr.message, code: sendErr.code };
     }
   } catch (smtpErr) {
-    results.smtp = { status: '❌ SMTP échoué — utilise Resend à la place', error: smtpErr.message, code: smtpErr.code };
-    results.email_send = { status: '⏭️ ignoré', hint: 'Ajoute RESEND_API_KEY sur Render' };
+    results.smtp = { status: 'ERREUR SMTP', error: smtpErr.message, code: smtpErr.code };
+    results.email_send = { status: 'ignore (SMTP KO)' };
   }
 
   // ── Test Groq ──
   try {
     const { ChatGroq } = require('@langchain/groq');
-    const llm = new ChatGroq({
-      apiKey: process.env.GROQ_API_KEY,
-      model: 'llama-3.3-70b-versatile',
-      temperature: 0,
-      maxTokens: 20
-    });
-    const resp = await llm.invoke('Réponds juste: OK');
-    results.groq = {
-      status: '✅ Groq API OK',
-      response: resp.content?.substring(0, 50)
-    };
+    const llm = new ChatGroq({ apiKey: process.env.GROQ_API_KEY, model: 'llama-3.3-70b-versatile', temperature: 0, maxTokens: 10 });
+    const resp = await llm.invoke('Say OK');
+    results.groq = { status: 'OK: Groq repond', response: resp.content?.substring(0, 30) };
   } catch (groqErr) {
-    results.groq = {
-      status: '❌ Groq API échouée',
-      error: groqErr.message
-    };
+    results.groq = { status: 'ERREUR Groq', error: groqErr.message };
   }
 
   res.json(results);

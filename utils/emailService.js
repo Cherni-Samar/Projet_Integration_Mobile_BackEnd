@@ -1,47 +1,44 @@
 const nodemailer = require('nodemailer');
 
 // ══════════════════════════════════════════════════════════════
-// TRANSPORT EMAIL — Resend (HTTP) en production, SMTP en local
-// Render bloque SMTP (ports 465/587) → on utilise Resend API
+// TRANSPORT EMAIL — Gmail SMTP uniquement
+// Resend désactivé : mode test Resend bloque les emails externes
+// Gmail SMTP fonctionne vers TOUTES les adresses email
 // ══════════════════════════════════════════════════════════════
 
-// Fonction d'envoi universelle : Resend si clé dispo, sinon SMTP
-async function sendEmail({ from, to, subject, html }) {
-  // ── Resend (production Render) ──
-  if (process.env.RESEND_API_KEY) {
-    const { Resend } = require('resend');
-    const resend = new Resend(process.env.RESEND_API_KEY);
-    const fromAddr = process.env.RESEND_FROM || 'E-Team RH <onboarding@resend.dev>';
-    const result = await resend.emails.send({ from: fromAddr, to, subject, html });
-    if (result.error) throw new Error(result.error.message || JSON.stringify(result.error));
-    return { messageId: result.data?.id || 'resend-ok', accepted: [to] };
-  }
-
-  // ── SMTP fallback (développement local) ──
-  const port = parseInt(process.env.EMAIL_PORT) || 587;
-  const transporter = nodemailer.createTransport({
-    host: process.env.EMAIL_HOST || 'smtp.gmail.com',
-    port,
-    secure: port === 465,
-    auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
-    tls: { rejectUnauthorized: false }
-  });
-  await transporter.verify();
-  const info = await transporter.sendMail({ from, to, subject, html });
-  return { messageId: info.messageId, accepted: info.accepted };
-}
-
-// Garde createTransporter pour compatibilité avec les autres fonctions du fichier
+// Créer le transporteur Gmail SMTP
 const createTransporter = () => {
-  const port = parseInt(process.env.EMAIL_PORT) || 587;
   return nodemailer.createTransport({
     host: process.env.EMAIL_HOST || 'smtp.gmail.com',
-    port,
-    secure: port === 465,
-    auth: { user: process.env.EMAIL_USER, pass: process.env.EMAIL_PASS },
+    port: parseInt(process.env.EMAIL_PORT) || 587,
+    secure: false,   // false pour port 587 (STARTTLS)
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS,
+    },
     tls: { rejectUnauthorized: false }
   });
 };
+
+// Vérifier la connexion SMTP au démarrage
+createTransporter().verify()
+  .then(() => console.log('✅ [EMAIL] Connexion SMTP Gmail OK — prêt à envoyer vers toutes adresses'))
+  .catch(err => console.error('❌ [EMAIL] Connexion SMTP échouée :', err.message));
+
+// Fonction d'envoi universelle — Gmail SMTP uniquement
+async function sendEmail({ from, to, subject, html }) {
+  console.log(`[EMAIL] Sending to: ${to}`);
+
+  if (!process.env.EMAIL_USER || !process.env.EMAIL_PASS) {
+    throw new Error('EMAIL_USER ou EMAIL_PASS manquant dans les variables environnement');
+  }
+
+  const transporter = createTransporter();
+  const info = await transporter.sendMail({ from, to, subject, html });
+  console.log(`[EMAIL] Sent successfully: ${to} — ID: ${info.messageId}`);
+  return { messageId: info.messageId, accepted: info.accepted };
+}
+
 
 // Envoyer un email de vérification
 const sendVerificationEmail = async (email, code) => {
@@ -394,19 +391,14 @@ const sendStaffingAlert = async (targetEmail, details) => {
 // 1. Pour confirmer la réception simple
 const sendCandidacyConfirmation = async (email, name) => {
   try {
-    if (!process.env.RESEND_API_KEY && (!process.env.EMAIL_USER || !process.env.EMAIL_PASS)) {
-      console.error('❌ [EMAIL] Aucune config email (RESEND_API_KEY ou EMAIL_USER/PASS manquant)');
-      return false;
-    }
-    console.log(`📧 [EMAIL] Envoi confirmation à : ${email}`);
     const info = await sendEmail({
-      from: `"E-Team RH" <${process.env.EMAIL_USER || 'noreply@e-team.com'}>`,
+      from: `"E-Team RH" <${process.env.EMAIL_USER}>`,
       to: email,
-      subject: '📩 Confirmation de réception : Votre candidature chez E-Team',
+      subject: 'Confirmation de réception : Votre candidature chez E-Team',
       html: `
         <div style="font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; max-width: 600px; margin: auto; border: 1px solid #eee; border-radius: 15px; padding: 30px; color: #1a1a1a;">
           <div style="text-align: center; margin-bottom: 25px;">
-            <span style="font-size: 22px; font-weight: bold; color: #000; letter-spacing: 1px;">E-TEAM <span style="color: #CCFF00;">•</span> RECRUTEMENT</span>
+            <span style="font-size: 22px; font-weight: bold; color: #000; letter-spacing: 1px;">E-TEAM</span>
           </div>
           <h2 style="font-size: 18px; color: #333;">Bonjour ${name},</h2>
           <p style="font-size: 15px; line-height: 1.6; color: #555;">
@@ -419,7 +411,7 @@ const sendCandidacyConfirmation = async (email, name) => {
             </p>
           </div>
           <p style="font-size: 15px; line-height: 1.6; color: #555;">
-            Si votre profil est retenu, vous recevrez une invitation pour un entretien IA.
+            Si votre profil est retenu, vous recevrez une invitation pour un entretien.
           </p>
           <p style="font-size: 15px; margin-top: 30px; color: #000; font-weight: bold;">Merci de votre intérêt pour E-Team.</p>
           <hr style="border: 0; border-top: 1px solid #eee; margin: 30px 0;">
@@ -427,10 +419,10 @@ const sendCandidacyConfirmation = async (email, name) => {
         </div>
       `
     });
-    console.log(`✅ [EMAIL] Confirmation envoyée à ${email} — ID: ${info.messageId}`);
+    console.log(`[EMAIL] Confirmation sent to: ${email}`);
     return true;
   } catch (e) {
-    console.error(`❌ [EMAIL] Erreur confirmation → ${email} : ${e.message}`);
+    console.error(`[EMAIL] Confirmation failed to ${email}: ${e.message}`);
     return false;
   }
 };
@@ -486,38 +478,28 @@ const sendGroupMeetingInvitation = async (email, details) => {
 };
 const sendInterviewInvitation = async (email, details) => {
   try {
-    console.log(`📧 [EMAIL] Envoi invitation entretien → ${email} (score: ${details.score})`);
     const info = await sendEmail({
-      from: `"E-Team RH" <${process.env.EMAIL_USER || 'noreply@e-team.com'}>`,
+      from: `"E-Team RH" <${process.env.EMAIL_USER}>`,
       to: email,
       subject: 'Invitation à votre entretien - E-Team',
       html: `
         <div style="font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; max-width: 600px; margin: auto; color: #1a1a1a; background-color: #ffffff; border: 1px solid #e1e1e1;">
-
-          <!-- Header -->
           <div style="background-color: #0A0A0A; padding: 36px; text-align: center;">
             <span style="font-size: 26px; font-weight: bold; color: #CCFF00; letter-spacing: 2px;">E-TEAM</span>
           </div>
-
-          <!-- Body -->
           <div style="padding: 40px 36px;">
             <h2 style="font-size: 20px; color: #000; margin-top: 0; font-weight: 600;">Félicitations ${details.name},</h2>
-
             <p style="font-size: 15px; line-height: 1.7; color: #444;">
               Votre candidature a été analysée et votre profil a obtenu un score de
               <strong style="color: #000;">${details.score}/100</strong>.
               Vous êtes sélectionné(e) pour passer à l'étape suivante du processus de recrutement.
             </p>
-
             <p style="font-size: 15px; line-height: 1.7; color: #444;">
               Nous vous invitons à un entretien individuel en ligne d'une durée de 10 à 15 minutes.
             </p>
-
-            <!-- Info box -->
             <div style="background-color: #f8f9fa; border-left: 4px solid #CCFF00; padding: 24px; margin: 28px 0;">
               <p style="margin: 0 0 6px 0; font-weight: bold; color: #000; text-transform: uppercase; font-size: 11px; letter-spacing: 1px;">Date prévue</p>
               <p style="margin: 0 0 24px 0; font-size: 16px; color: #333; font-weight: 500;">${details.interview_date}</p>
-
               <p style="margin: 0 0 12px 0; font-weight: bold; color: #000; text-transform: uppercase; font-size: 11px; letter-spacing: 1px;">Accéder à votre entretien</p>
               <div style="text-align: center; margin-top: 8px;">
                 <a href="${details.meeting_link}"
@@ -526,8 +508,6 @@ const sendInterviewInvitation = async (email, details) => {
                 </a>
               </div>
             </div>
-
-            <!-- Instructions -->
             <div style="border: 1px solid #e8e8e8; padding: 20px; margin-bottom: 28px;">
               <p style="margin: 0 0 12px 0; font-weight: bold; color: #000; font-size: 13px; text-transform: uppercase; letter-spacing: 0.5px;">Avant de commencer</p>
               <ul style="margin: 0; padding-left: 18px; color: #555; font-size: 14px; line-height: 2;">
@@ -536,25 +516,19 @@ const sendInterviewInvitation = async (email, details) => {
                 <li>L'entretien comporte 12 questions en 4 phases</li>
               </ul>
             </div>
-
             <p style="font-size: 13px; color: #888;">Ce lien est personnel. Ne le partagez pas.</p>
-
             <p style="margin-bottom: 4px; font-size: 15px; color: #000;">Cordialement,</p>
             <p style="margin-top: 0; font-weight: bold; color: #000;">L'équipe RH — E-Team</p>
           </div>
-
-          <!-- Footer -->
           <div style="background-color: #f4f4f4; padding: 18px; text-align: center; border-top: 1px solid #eee;">
-            <p style="margin: 0; color: #999; font-size: 11px;">
-              © 2026 E-Team — Message automatique
-            </p>
+            <p style="margin: 0; color: #999; font-size: 11px;">© 2026 E-Team — Message automatique</p>
           </div>
         </div>`
     });
-    console.log(`✅ [EMAIL] Invitation entretien envoyée à ${email} — ID: ${info.messageId}`);
+    console.log(`[EMAIL] Interview invitation sent to: ${email}`);
     return true;
   } catch (e) {
-    console.error(`❌ [EMAIL] Erreur sendInterviewInvitation → ${email} : ${e.message}`);
+    console.error(`[EMAIL] Interview invitation failed to ${email}: ${e.message}`);
     return false;
   }
 };
