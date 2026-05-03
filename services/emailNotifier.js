@@ -93,9 +93,12 @@ class EmailNotifier {
       message = `<b>EMAIL MOYEN</b>\n`;
     }
 
-    message += `<b>De:</b> ${emailData.sender.name || emailData.sender.address}\n`;
-    message += `<b>Sujet:</b> ${emailData.subject}\n`;
-    message += `<b>Score:</b> ${emailData.importanceScore}/100`;
+    const senderAddress = emailData.sender?.address || emailData.sender || '';
+    const senderName = emailData.sender?.name || '';
+    const senderDisplay = senderName ? `${senderName} &lt;${senderAddress}&gt;` : senderAddress;
+    message += `<b>De:</b> ${senderDisplay}\n`;
+    message += `<b>Sujet:</b> ${emailData.subject}\n\n`;
+    message += `${emailData.body || emailData.content || emailData.snippet || ''}`;
 
     return message;
   }

@@ -124,6 +124,11 @@ class EmailProcessor {
             });
           }
 
+          // Mark email as read in Gmail after successful processing
+          if (process.env.GMAIL_MARK_READ_AFTER_PROCESS === 'true') {
+            await emailCollector.markAsRead(email.emailId);
+          }
+
           console.log(`[EmailProcessor] ✅ Processed email ${email.emailId} (${importanceLevel} importance, score: ${analysis.importanceScore})`);
 
         } catch (error) {
