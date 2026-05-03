@@ -2,11 +2,10 @@ const nodemailer = require('nodemailer');
 
 // ══════════════════════════════════════════════════════════════
 // TRANSPORT EMAIL
-// Priorité : Brevo API (HTTP) → SMTP Gmail (local)
-// Render bloque SMTP → Brevo fonctionne via HTTP vers TOUTES adresses
+// Brevo REST API (HTTP) → fonctionne sur Render vers TOUTES adresses
+// SMTP Gmail → fallback local uniquement
 // ══════════════════════════════════════════════════════════════
 
-// Créer le transporteur SMTP (utilisé en local uniquement)
 const createTransporter = () => {
   return nodemailer.createTransport({
     host: process.env.EMAIL_HOST || 'smtp.gmail.com',
@@ -17,25 +16,32 @@ const createTransporter = () => {
   });
 };
 
-// Fonction d'envoi universelle
 async function sendEmail({ from, to, subject, html }) {
   console.log(`[EMAIL] Sending to: ${to}`);
 
-  // ── Brevo API HTTP (fonctionne sur Render, vers toutes adresses) ──
+  // ── Brevo REST API (pas de SDK, juste fetch HTTP) ──
   if (process.env.BREVO_API_KEY) {
-    const SibApiV3Sdk = require('@getbrevo/brevo');
-    const apiInstance = new SibApiV3Sdk.TransactionalEmailsApi();
-    apiInstance.setApiKey(SibApiV3Sdk.TransactionalEmailsApiApiKeys.apiKey, process.env.BREVO_API_KEY);
-
-    const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
-    sendSmtpEmail.subject = subject;
-    sendSmtpEmail.htmlContent = html;
-    sendSmtpEmail.sender = { name: 'E-Team RH', email: process.env.EMAIL_USER || 'noreply@e-team.com' };
-    sendSmtpEmail.to = [{ email: to }];
-
-    const result = await apiInstance.sendTransacEmail(sendSmtpEmail);
-    console.log(`[EMAIL] Sent successfully via Brevo: ${to} — ID: ${result.body?.messageId || 'ok'}`);
-    return { messageId: result.body?.messageId || 'brevo-ok', accepted: [to] };
+    const fetch = (...args) => import('node-fetch').then(m => m.default(...args));
+    const senderEmail = process.env.EMAIL_USER || 'noreply@e-team.com';
+    const body = JSON.stringify({
+      sender:      { name: 'E-Team RH', email: senderEmail },
+      to:          [{ email: to }],
+      subject:     subject,
+      htmlContent: html
+    });
+    const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+      method:  'POST',
+      headers: {
+        'accept':       'application/json',
+        'content-type': 'application/json',
+        'api-key':      process.env.BREVO_API_KEY
+      },
+      body
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.message || JSON.stringify(data));
+    console.log(`[EMAIL] Sent successfully via Brevo: ${to} — ID: ${data.messageId || 'ok'}`);
+    return { messageId: data.messageId || 'brevo-ok', accepted: [to] };
   }
 
   // ── SMTP Gmail (fallback local) ──
