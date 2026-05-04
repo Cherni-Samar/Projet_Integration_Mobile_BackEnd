@@ -12,6 +12,8 @@ const {
 } = require('../middleware/agentGuard');
 const upload = multer({ dest: 'uploads/cv/' });
 const { triggerStaffingForUser } = require('../services/hera/staffingEventService');
+const { triggerHeraActionNow } = require('../cron/heraActionCron');
+const HeraActionProcessor = require('../services/hera/heraActionProcessor.service');
 // --- ROUTES EMPLOYÉ ---
 router.post(
   '/leave-request',
@@ -117,5 +119,47 @@ router.get('/hr-requests/:employee_id',             requireEmployeeAgentAccess('
 router.get('/manager/departments/:employee_id',     requireEmployeeAgentAccess('hera'), hera.getManagerDepartments);
 router.get('/manager/employees/:employee_id',       requireEmployeeAgentAccess('hera'), hera.getManagerEmployees);
 router.get('/manager/dashboard/:employee_id',       requireEmployeeAgentAccess('hera'), hera.getManagerDashboard);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TEST ENDPOINTS - Hera Action Processor
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Manual trigger for Hera Action Processor
+ * GET /api/hera/test/process-recruitment-requests
+ * 
+ * Use this to manually trigger recruitment request processing
+ * without waiting for the cron job
+ */
+router.get('/test/process-recruitment-requests', authMiddleware, async (req, res) => {
+  try {
+    console.log('[TEST ENDPOINT] Manual trigger initiated by user:', req.user.id);
+    const result = await triggerHeraActionNow();
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
+
+/**
+ * Get processing statistics
+ * GET /api/hera/test/processing-stats
+ * 
+ * Returns statistics about recruitment request processing
+ */
+router.get('/test/processing-stats', authMiddleware, async (req, res) => {
+  try {
+    const stats = await HeraActionProcessor.getProcessingStats();
+    res.json(stats);
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      error: error.message
+    });
+  }
+});
 
 module.exports = router;

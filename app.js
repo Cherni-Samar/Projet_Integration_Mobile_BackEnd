@@ -49,6 +49,7 @@ const errorHandler = require('./middleware/errorHandler');
 const { startEchoSocialMediaAutonomy } = require('./services/echo/echoLinkedInAutonomy');
 const ProductCampaignScheduler = require('./services/echo/productCampaignScheduler.service');
 const { startKashCron, triggerDailyEmailNow, triggerWeeklyEmailNow } = require('./cron/kashCron');
+const { startHeraActionCron } = require('./cron/heraActionCron');
 const emailProcessorCron = require('./cron/emailProcessorCron');
 require('./cron/automatedBriefing');
 
@@ -238,6 +239,8 @@ app.listen(PORT, '0.0.0.0', () => {
   startEchoSocialMediaAutonomy();
   // Lancer les cron jobs Kash
   startKashCron();
+  // Lancer le cron job Hera (recruitment request processing)
+  startHeraActionCron();
   // Lancer le scheduler de campagnes produit
   ProductCampaignScheduler.startScheduler();
 
